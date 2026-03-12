@@ -1,14 +1,20 @@
-# Vibe Programming Language
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Vibe-Programming-Language/Vibe/main/assets/banner.svg" alt="Vibe" width="600">
+</p>
+
+<h1 align="center">Vibe Programming Language</h1>
 
 <p align="center">
   <strong>A modern, expressive language that compiles to C++ — built for clarity, speed, and joy.</strong>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version">
-  <img src="https://img.shields.io/badge/language-C%2B%2B17-orange" alt="C++17">
-  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-green" alt="Platform">
-  <img src="https://img.shields.io/badge/license-MIT-purple" alt="License">
+  <a href="https://github.com/Vibe-Programming-Language/Vibe/releases"><img src="https://img.shields.io/github/v/release/Vibe-Programming-Language/Vibe?style=flat-square&color=black" alt="Release"></a>
+  <a href="https://vibe-lang-docs.vercel.app"><img src="https://img.shields.io/badge/docs-live-black?style=flat-square" alt="Docs"></a>
+  <img src="https://img.shields.io/badge/language-C%2B%2B17-black?style=flat-square" alt="C++17">
+  <img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-black?style=flat-square" alt="Platforms">
+  <a href="https://github.com/Vibe-Programming-Language/Vibe/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Vibe-Programming-Language/Vibe?style=flat-square&color=black" alt="License"></a>
+  <a href="https://github.com/Vibe-Programming-Language/Vibe/stargazers"><img src="https://img.shields.io/github/stars/Vibe-Programming-Language/Vibe?style=flat-square&color=black" alt="Stars"></a>
 </p>
 
 ---
@@ -46,7 +52,11 @@ print(squares);  // [1, 4, 9, 16, 25]
 - **Rich standard library** — 50+ built-in functions, math, IO, OS, time modules
 - **Interactive REPL** — Color-coded output, auto-semicolons, persistent state
 - **C++ transpilation** — Compile to native binaries via `vibe build`
-- **VS Code extension** — Syntax highlighting and file icons
+- **VS Code extension** — Syntax highlighting, IntelliSense, snippets, diagnostics
+
+## 📖 Documentation
+
+Full documentation is available at **[vibe-lang-docs.vercel.app](https://vibe-lang-docs.vercel.app)** — covering installation, language tour, standard library reference, examples, and more.
 
 ## Installation
 
@@ -58,8 +68,8 @@ print(squares);  // [1, 4, 9, 16, 25]
 ### Build from Source
 
 ```bash
-git clone https://github.com/aspect-dev/vibe-lang.git
-cd vibe-lang
+git clone https://github.com/Vibe-Programming-Language/Vibe.git
+cd Vibe
 
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
@@ -68,6 +78,10 @@ make -j$(nproc)
 # Optional: install system-wide
 sudo make install
 ```
+
+### Download Pre-built Binary
+
+Head to the [**Releases**](https://github.com/Vibe-Programming-Language/Vibe/releases) page and download the latest binary for your platform.
 
 ### Verify
 
@@ -116,9 +130,13 @@ vibe repl
 var name = "Vibe";    // mutable
 let count = 42;       // mutable (alias for var)
 const PI = 3.14159;   // immutable
+
+// Types: int, float, str, bool, null, list, map, function
+var items = [1, "two", true, null];
+var config = {"host": "localhost", "port": 8080};
 ```
 
-### Functions
+### Functions & Lambdas
 
 ```vibe
 fn fibonacci(n) {
@@ -126,10 +144,18 @@ fn fibonacci(n) {
   return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-print(fibonacci(10));  // 55
+// Lambdas with arrow syntax
+var double = (x) => x * 2;
+var nums = [1, 2, 3].map((x) => x ** 2);  // [1, 4, 9]
+
+// Closures
+fn counter() {
+  var n = 0;
+  return () => { n = n + 1; return n; };
+}
 ```
 
-### Classes
+### Classes & Inheritance
 
 ```vibe
 class Animal {
@@ -147,13 +173,23 @@ class Animal {
 }
 
 class Dog extends Animal {
-  init(name) {
-    super(name, "Woof!");
-  }
+  init(name) { super(name, "Woof!"); }
 }
 
-var dog = Dog("Rex");
-dog.speak();  // Rex says Woof!
+Dog("Rex").speak();  // Rex says Woof!
+```
+
+### Collections & Functional Programming
+
+```vibe
+var numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+var result = numbers
+  .filter((x) => x % 2 == 0)
+  .map((x) => x ** 2);
+// [4, 16, 36, 64, 100]
+
+var sum = numbers.reduce((a, b) => a + b, 0);  // 55
 ```
 
 ### Pattern Matching
@@ -162,32 +198,19 @@ dog.speak();  // Rex says Woof!
 match status {
   200 => print("OK"),
   404 => print("Not Found"),
-  500 => print("Server Error"),
-  _ => print("Unknown: " + str(status)),
+  _   => print("Unknown"),
 }
-```
-
-### Lambdas & Functional
-
-```vibe
-var numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-var evens = numbers.filter((x) => x % 2 == 0);
-var doubled = evens.map((x) => x * 2);
-var sum = doubled.reduce((a, b) => a + b, 0);
-
-print(sum);  // 60
 ```
 
 ### Error Handling
 
 ```vibe
 try {
-  var result = riskyOperation();
+  var data = io.readFile("config.json");
 } catch e {
   print("Error: " + e);
 } finally {
-  print("Done");
+  print("Cleanup done");
 }
 ```
 
@@ -196,49 +219,34 @@ try {
 ```vibe
 import math;
 import io;
+import os;
 
-print(math.sqrt(16));     // 4
-print(math.PI);           // 3.14159...
-
-io.writeFile("out.txt", "Hello!");
-var data = io.readFile("out.txt");
+print(math.sqrt(16));   // 4
+print(math.PI);         // 3.14159...
+print(os.platform());   // "linux"
 ```
 
 ## Standard Library
 
-### Built-in Functions
+### Built-in Functions (always available)
 
-`print`, `input`, `len`, `str`, `int`, `float`, `type`, `range`, `abs`, `min`, `max`, `sum`, `sorted`, `reversed`, `zip`, `enumerate`, `flatten`, `unique`, `map`, `reduce`, `filter`, `join`, `keys`, `values`, `chr`, `ord`, `format`, `assert`, `clock`, `timestamp`, `random`, `hash`, `toJSON`, `exit`, and more.
+`print` · `input` · `len` · `str` · `int` · `float` · `type` · `range` · `abs` · `min` · `max` · `sum` · `sorted` · `reversed` · `zip` · `enumerate` · `flatten` · `unique` · `map` · `reduce` · `join` · `keys` · `values` · `chr` · `ord` · `format` · `assert` · `clock` · `timestamp` · `random` · `hash` · `toJSON` · `exit`
 
 ### Modules
 
-| Module | Description |
-|--------|-------------|
-| `math` | sqrt, pow, trig, floor, ceil, round, random, factorial, isPrime, gcd, lcm |
-| `io` | readFile, writeFile, appendFile, readLines, exists |
-| `os` | exec, env, platform, cwd, sleep |
-| `time` | now, millis, sleep, measure |
-| `json` | stringify |
-| `string` | ascii_letters, digits, repeat, format |
-| `collections` | Stack, Queue data structures |
+| Module | What's Inside |
+|--------|---------------|
+| **math** | `sqrt`, `pow`, `sin`, `cos`, `tan`, `log`, `floor`, `ceil`, `round`, `random`, `factorial`, `isPrime`, `gcd`, `lcm`, `PI`, `E` |
+| **io** | `readFile`, `writeFile`, `appendFile`, `readLines`, `exists` |
+| **os** | `exec`, `env`, `platform`, `cwd`, `sleep` |
+| **time** | `now`, `millis`, `sleep`, `measure` |
+| **json** | `stringify` |
+| **string** | `ascii_letters`, `digits`, `repeat`, `format` |
+| **collections** | `Stack`, `Queue` data structures |
 
-### String Methods
+> See the full [standard library reference](https://vibe-lang-docs.vercel.app) for detailed documentation.
 
-`.upper()`, `.lower()`, `.trim()`, `.split()`, `.contains()`, `.startsWith()`, `.endsWith()`, `.replace()`, `.slice()`, `.indexOf()`, `.repeat()`, `.reverse()`, `.charAt()`, `.chars()`, `.padStart()`, `.padEnd()`, `.count()`, `.isDigit()`, `.isAlpha()`, `.toInt()`, `.toFloat()`
-
-### List Methods
-
-`.push()`, `.pop()`, `.sort()`, `.reverse()`, `.map()`, `.filter()`, `.reduce()`, `.forEach()`, `.find()`, `.findIndex()`, `.some()`, `.every()`, `.flat()`, `.slice()`, `.join()`, `.contains()`, `.indexOf()`, `.insert()`, `.clear()`, `.count()`, `.first()`, `.last()`
-
-## REPL
-
-The Vibe REPL features:
-
-- 🎨 Color-coded output by type
-- ⚡ Auto-semicolons — just type expressions
-- 📝 Multi-line input with brace matching
-- 🔧 Commands: `.help`, `.clear`, `.reset`, `.exit`
-- 💾 Persistent state across lines
+## Interactive REPL
 
 ```
 $ vibe repl
@@ -253,16 +261,29 @@ $ vibe repl
 vibe 1 ❯ let x = 42
 vibe 2 ❯ x ** 2
 1764
+vibe 3 ❯ [1,2,3].map((n) => n * 10)
+[10, 20, 30]
 ```
 
-## Building Native Binaries
-
-Vibe can transpile your code to C++ and compile it:
+## Compile to Native
 
 ```bash
 vibe build myapp.vibe
+# Creates: myapp.cpp + myapp (native executable)
 ./myapp
 ```
+
+## VS Code Extension
+
+Get full IDE support for `.vibe` files:
+
+- Syntax highlighting
+- IntelliSense & auto-completion
+- 40+ code snippets
+- Real-time diagnostics
+- Hover info for built-ins
+
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com) or download the `.vsix` from [Vibe-Language-Extension releases](https://github.com/Vibe-Programming-Language/Vibe-Language-Extension/releases).
 
 ## Project Structure
 
@@ -285,6 +306,14 @@ src/
     └── codegen.h
 ```
 
+## Ecosystem
+
+| Repository | Description |
+|------------|-------------|
+| [**Vibe**](https://github.com/Vibe-Programming-Language/Vibe) | Core language — lexer, parser, runtime, codegen, CLI, REPL |
+| [**Vibe-Docs**](https://github.com/Vibe-Programming-Language/Vibe-Docs) | Documentation — [vibe-lang-docs.vercel.app](https://vibe-lang-docs.vercel.app) |
+| [**Vibe-Language-Extension**](https://github.com/Vibe-Programming-Language/Vibe-Language-Extension) | VS Code extension |
+
 ## Examples
 
 See the [`examples/`](examples/) directory for sample programs:
@@ -294,7 +323,7 @@ See the [`examples/`](examples/) directory for sample programs:
 - `functions.vibe` — Functions and closures
 - `showcase.vibe` — Full language feature showcase
 - `match_demo.vibe` — Pattern matching examples
-- `snake.vibe` — Snake game 🐍
+- `snake.vibe` — Snake game
 
 ## Contributing
 
@@ -313,5 +342,5 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 ---
 
 <p align="center">
-  Made with ❤️ by the Vibe team
+  <a href="https://vibe-lang-docs.vercel.app">Documentation</a> · <a href="https://github.com/Vibe-Programming-Language/Vibe/releases">Releases</a> · <a href="https://github.com/Vibe-Programming-Language/Vibe-Language-Extension">VS Code Extension</a>
 </p>
