@@ -1,0 +1,14 @@
+fn main() {
+    var day = "Friday";
+    match (day) {
+        "Monday" -> print("Start of week");
+        "Friday" -> print("TGIF!");
+        "Sunday" -> print("Rest day");
+        _        -> print("Regular day");
+    }
+
+    for (var i in range(0, 5)) {
+        print("i=" + i);
+    }
+}
+

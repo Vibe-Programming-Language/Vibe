@@ -1,0 +1,199 @@
+// ═══════════════════════════════════════
+//  Snake Game — Written in Vibe
+//  Turn-based terminal Snake
+//  Controls: w/a/s/d + Enter each turn
+// ═══════════════════════════════════════
+
+// ── Grid dimensions ──
+const WIDTH = 20;
+const HEIGHT = 15;
+
+// ── Game state ──
+var snake = [];       // list of [x, y] positions
+var dir = "d";        // current direction
+var foodX = 10;
+var foodY = 7;
+var score = 0;
+var gameOver = false;
+
+// ── Initialize snake in the center ──
+fn initGame() {
+    snake = [];
+    var startX = WIDTH ~/ 2;
+    var startY = HEIGHT ~/ 2;
+    snake.push([startX, startY]);
+    snake.push([startX - 1, startY]);
+    snake.push([startX - 2, startY]);
+    dir = "d";
+    score = 0;
+    gameOver = false;
+    placeFood();
+}
+
+// ── Simple pseudo-random using game state ──
+var seed = 42;
+fn nextRandom(maxVal) {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    var result = seed % maxVal;
+    if (result < 0) { result = result * -1; }
+    return result;
+}
+
+// ── Place food at a random empty spot ──
+fn placeFood() {
+    var placed = false;
+    var attempts = 0;
+    while (!placed && attempts < 200) {
+        foodX = nextRandom(WIDTH - 2) + 1;
+        foodY = nextRandom(HEIGHT - 2) + 1;
+        // Check food isn't on snake
+        var onSnake = false;
+        for var i in range(0, snake.length()) {
+            var seg = snake[i];
+            if (seg[0] == foodX && seg[1] == foodY) {
+                onSnake = true;
+            }
+        }
+        if (!onSnake) {
+            placed = true;
+        }
+        attempts = attempts + 1;
+    }
+}
+
+// ── Draw the board ──
+fn drawBoard() {
+    // Clear screen (works on Linux/macOS)
+    print("\n\n\n");
+
+    print("╔" + "═".repeat(WIDTH) + "╗");
+
+    for var y in range(0, HEIGHT) {
+        var row = "║";
+        for var x in range(0, WIDTH) {
+            var ch = " ";
+
+            // Check if this is the snake head
+            var head = snake[0];
+            if (head[0] == x && head[1] == y) {
+                ch = "@";
+            } else if (x == foodX && y == foodY) {
+                ch = "*";
+            } else {
+                // Check snake body
+                for var i in range(1, snake.length()) {
+                    var seg = snake[i];
+                    if (seg[0] == x && seg[1] == y) {
+                        ch = "#";
+                    }
+                }
+            }
+            row = row + ch;
+        }
+        row = row + "║";
+        print(row);
+    }
+
+    print("╚" + "═".repeat(WIDTH) + "╝");
+    print("Score: " + str(score) + "  |  Length: " + str(snake.length()));
+    print("Controls: w=up  s=down  a=left  d=right  q=quit");
+}
+
+// ── Move the snake ──
+fn moveSnake() {
+    var head = snake[0];
+    var newX = head[0];
+    var newY = head[1];
+
+    match dir {
+        "w" -> { newY = newY - 1; }
+        "s" -> { newY = newY + 1; }
+        "a" -> { newX = newX - 1; }
+        "d" -> { newX = newX + 1; }
+    }
+
+    // ── Check wall collision ──
+    if (newX < 0 || newX >= WIDTH || newY < 0 || newY >= HEIGHT) {
+        gameOver = true;
+        return;
+    }
+
+    // ── Check self collision ──
+    for var i in range(0, snake.length()) {
+        var seg = snake[i];
+        if (seg[0] == newX && seg[1] == newY) {
+            gameOver = true;
+            return;
+        }
+    }
+
+    // ── Add new head ──
+    var newSnake = [[newX, newY]];
+    for var i in range(0, snake.length()) {
+        newSnake.push(snake[i]);
+    }
+    snake = newSnake;
+
+    // ── Check food ──
+    if (newX == foodX && newY == foodY) {
+        score = score + 10;
+        // Update seed based on score for variation
+        seed = seed + score * 7 + newX * 13 + newY * 31;
+        placeFood();
+    } else {
+        // Remove tail (no growth)
+        var trimmed = [];
+        for var i in range(0, snake.length() - 1) {
+            trimmed.push(snake[i]);
+        }
+        snake = trimmed;
+    }
+}
+
+// ── Main Game Loop ──
+fn main() {
+    print("═══════════════════════════════");
+    print("     SNAKE GAME — Vibe");
+    print("═══════════════════════════════");
+    print("");
+    print("  @ = your head");
+    print("  # = your body");
+    print("  * = food");
+    print("");
+    print("  Eat food (*) to grow!");
+    print("  Don't hit walls or yourself!");
+    print("");
+
+    initGame();
+
+    while (!gameOver) {
+        drawBoard();
+
+        var move = input("Direction (w/a/s/d/q): ");
+        move = move.lower().trim();
+
+        if (move == "q") {
+            print("Thanks for playing! Final score: " + str(score));
+            return;
+        }
+
+        // Validate direction (prevent 180-degree turns)
+        if (move == "w" && dir != "s") { dir = "w"; }
+        if (move == "s" && dir != "w") { dir = "s"; }
+        if (move == "a" && dir != "d") { dir = "a"; }
+        if (move == "d" && dir != "a") { dir = "d"; }
+
+        moveSnake();
+    }
+
+    // Game Over
+    drawBoard();
+    print("");
+    print("══════════════════════════");
+    print("   GAME OVER!");
+    print("   Final Score: " + str(score));
+    print("   Snake Length: " + str(snake.length()));
+    print("══════════════════════════");
+}
+
+main();

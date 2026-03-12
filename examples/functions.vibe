@@ -1,0 +1,15 @@
+fn power(base: int, exp: int = 2) -> int {
+    return base ** exp;
+}
+
+fn main() {
+    print(power(3));
+    print(power(3, 3));
+
+    var x = 1;
+    for (var i = 0; i < 5; i += 1) {
+        x *= 2;
+    }
+    print("x=" + x);
+}
+
