@@ -1,0 +1,5 @@
+<svg viewBox="0 0 800 200" xmlns="http://www.w3.org/2000/svg" fill="none" style="background:#0a0a0a;border-radius:16px">
+  <path d="M 340 30 L 400 170 L 460 30" stroke="white" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <circle cx="400" cy="178" r="6" fill="white" opacity="0.5"/>
+  <text x="400" y="195" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="10" fill="white" opacity="0.4" letter-spacing="6">VIBE PROGRAMMING LANGUAGE</text>
+</svg>
