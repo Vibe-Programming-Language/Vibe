@@ -13,7 +13,7 @@
 
 namespace fs = std::filesystem;
 
-static const char* VERSION = "1.0.0";
+static const char* VERSION = "1.1.0";
 
 static void printUsage() {
   std::cout << "Vibe Programming Language v" << VERSION << "\n\n";
@@ -23,6 +23,7 @@ static void printUsage() {
   std::cout << "  vibe build <file.vibe>    Transpile to C++ and compile\n";
   std::cout << "  vibe check <file.vibe>    Check for syntax errors\n";
   std::cout << "  vibe repl                 Start interactive REPL\n";
+  std::cout << "  vibe update               Update Vibe to the latest version\n";
   std::cout << "  vibe version              Show version\n";
   std::cout << "  vibe help                 Show this help\n";
 }
@@ -113,6 +114,100 @@ static void checkFile(const std::string& path) {
     std::cerr << "✗ " << e.what() << std::endl;
     std::exit(1);
   }
+}
+
+static void updateVibe() {
+  std::cout << "\033[1;36mVibe Update\033[0m\n\n";
+  std::cout << "  Current version: \033[33mv" << VERSION << "\033[0m\n\n";
+
+#ifdef _WIN32
+  // Windows: download latest installer and run it
+  std::cout << "  Downloading latest Vibe installer...\n";
+  std::string cmd =
+      "powershell -Command \""
+      "$url = (Invoke-RestMethod -Uri 'https://api.github.com/repos/Vibe-Programming-Language/Vibe/releases/latest').assets "
+      "| Where-Object { $_.name -like '*setup*' } | Select-Object -First 1 -ExpandProperty browser_download_url; "
+      "if ($url) { "
+      "  $tmp = [System.IO.Path]::GetTempFileName() + '.exe'; "
+      "  Invoke-WebRequest -Uri $url -OutFile $tmp; "
+      "  Start-Process $tmp -Wait; "
+      "  Remove-Item $tmp "
+      "} else { "
+      "  Write-Host 'No Windows installer found in latest release.' "
+      "}\"";
+  int result = std::system(cmd.c_str());
+  if (result == 0) {
+    std::cout << "\n  \033[32m✓ Update complete! Restart your terminal.\033[0m\n";
+  } else {
+    std::cerr << "\n  \033[31m✗ Update failed.\033[0m\n";
+    std::cerr << "  You can manually download the latest release from:\n";
+    std::cerr << "  https://github.com/Vibe-Programming-Language/Vibe/releases/latest\n";
+    std::exit(1);
+  }
+#else
+  // Linux/macOS: download latest .deb or binary
+  // Check if running on a Debian-based system
+  bool hasDpkg = (std::system("which dpkg > /dev/null 2>&1") == 0);
+  bool hasCurl = (std::system("which curl > /dev/null 2>&1") == 0);
+  bool hasWget = (std::system("which wget > /dev/null 2>&1") == 0);
+
+  if (!hasCurl && !hasWget) {
+    std::cerr << "  \033[31m✗ curl or wget is required for updates.\033[0m\n";
+    std::cerr << "  Install with: sudo apt install curl\n";
+    std::exit(1);
+  }
+
+  std::string downloader = hasCurl ? "curl -sL" : "wget -qO-";
+
+  if (hasDpkg) {
+    // Debian/Ubuntu: download and install .deb
+    std::cout << "  Downloading latest .deb package...\n";
+    std::string cmd =
+        "set -e; "
+        "DOWNLOAD_URL=$(" + downloader + " https://api.github.com/repos/Vibe-Programming-Language/Vibe/releases/latest"
+        " | grep -o '\"browser_download_url\": *\"[^\"]*\\.deb\"' | head -1 | cut -d'\"' -f4); "
+        "if [ -z \"$DOWNLOAD_URL\" ]; then echo '  No .deb found in latest release.'; exit 1; fi; "
+        "TMP=$(mktemp /tmp/vibe-XXXXXX.deb); "
+        + std::string(hasCurl ? "curl -sL -o \"$TMP\" \"$DOWNLOAD_URL\"" : "wget -qO \"$TMP\" \"$DOWNLOAD_URL\"") + "; "
+        "echo '  Installing (may require sudo password)...'; "
+        "sudo dpkg -i \"$TMP\"; "
+        "rm -f \"$TMP\"";
+    int result = std::system(cmd.c_str());
+    if (result == 0) {
+      std::cout << "\n  \033[32m✓ Vibe updated successfully!\033[0m\n";
+      // Show new version
+      std::system("vibe version");
+    } else {
+      std::cerr << "\n  \033[31m✗ Update failed.\033[0m\n";
+      std::cerr << "  You can manually download from:\n";
+      std::cerr << "  https://github.com/Vibe-Programming-Language/Vibe/releases/latest\n";
+      std::exit(1);
+    }
+  } else {
+    // Non-Debian: download binary directly
+    std::cout << "  Downloading latest binary...\n";
+    std::string cmd =
+        "set -e; "
+        "DOWNLOAD_URL=$(" + downloader + " https://api.github.com/repos/Vibe-Programming-Language/Vibe/releases/latest"
+        " | grep -o '\"browser_download_url\": *\"[^\"]*vibe-linux[^\"]*\"' | head -1 | cut -d'\"' -f4); "
+        "if [ -z \"$DOWNLOAD_URL\" ]; then echo '  No Linux binary found in latest release.'; exit 1; fi; "
+        "TMP=$(mktemp /tmp/vibe-XXXXXX); "
+        + std::string(hasCurl ? "curl -sL -o \"$TMP\" \"$DOWNLOAD_URL\"" : "wget -qO \"$TMP\" \"$DOWNLOAD_URL\"") + "; "
+        "chmod +x \"$TMP\"; "
+        "echo '  Installing to /usr/local/bin (may require sudo password)...'; "
+        "sudo mv \"$TMP\" /usr/local/bin/vibe; "
+        "echo '  Done.'";
+    int result = std::system(cmd.c_str());
+    if (result == 0) {
+      std::cout << "\n  \033[32m✓ Vibe updated successfully!\033[0m\n";
+    } else {
+      std::cerr << "\n  \033[31m✗ Update failed.\033[0m\n";
+      std::cerr << "  You can manually download from:\n";
+      std::cerr << "  https://github.com/Vibe-Programming-Language/Vibe/releases/latest\n";
+      std::exit(1);
+    }
+  }
+#endif
 }
 
 static void printReplWelcome() {
@@ -337,6 +432,8 @@ int main(int argc, char* argv[]) {
     checkFile(argv[2]);
   } else if (cmd == "repl") {
     repl();
+  } else if (cmd == "update" || cmd == "upgrade") {
+    updateVibe();
   } else if (cmd == "version" || cmd == "--version" || cmd == "-v") {
     std::cout << "Vibe " << VERSION << std::endl;
   } else if (cmd == "help" || cmd == "--help" || cmd == "-h") {

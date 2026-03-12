@@ -10,7 +10,7 @@
 
 ; ── Metadata ──
 !define PRODUCT_NAME "Vibe"
-!define PRODUCT_VERSION "1.0.0"
+!define PRODUCT_VERSION "1.1.0"
 !define PRODUCT_PUBLISHER "Vibe Language Team"
 !define PRODUCT_WEB_SITE "https://vibelang.dev"
 
