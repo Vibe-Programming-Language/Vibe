@@ -19,6 +19,7 @@ Makefile
 compile_commands.json
 _CPack_Packages/
 *.deb
+!packaging/releases/**/*.deb
 
 # IDE
 .vscode/
