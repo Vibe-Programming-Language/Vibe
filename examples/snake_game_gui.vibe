@@ -1,0 +1,284 @@
+// ═══════════════════════════════════════════════════════════════
+//  Snake Game - Vibe GUI Implementation
+//  A full-featured graphical snake game using vibe.ui
+//  Controls: Arrow keys to move, SPACE to pause, ESC to quit
+// ═══════════════════════════════════════════════════════════════
+
+import vibe.ui;
+import vibe.time;
+
+// Game constants
+const GRID_WIDTH = 30;
+const GRID_HEIGHT = 20;
+const TILE_SIZE = 20;
+const WINDOW_WIDTH = GRID_WIDTH * TILE_SIZE;
+const WINDOW_HEIGHT = GRID_HEIGHT * TILE_SIZE + 50;
+const UPDATE_RATE = 100;  // milliseconds per update
+
+// Game state
+var snake = [];           // List of [x, y] positions
+var direction = "right";  // Current direction
+var nextDirection = "right"; // Next direction (from input)
+var food = [];
+var score = 0;
+var gameOver = false;
+var gamePaused = false;
+var lastUpdateTime = 0;
+
+// ═══════════════════════════════════════════════════════════════
+//  Helper Functions
+// ═══════════════════════════════════════════════════════════════
+
+fn initGame() {
+    // Initialize snake in center
+    var centerX = GRID_WIDTH / 2;
+    var centerY = GRID_HEIGHT / 2;
+    
+    snake = [];
+    snake.push([centerX, centerY]);
+    snake.push([centerX - 1, centerY]);
+    snake.push([centerX - 2, centerY]);
+    
+    direction = "right";
+    nextDirection = "right";
+    score = 0;
+    gameOver = false;
+    gamePaused = false;
+    
+    spawnFood();
+}
+
+fn spawnFood() {
+    var validPosition = false;
+    
+    while !validPosition {
+        var x = math.floor(math.random() * GRID_WIDTH);
+        var y = math.floor(math.random() * GRID_HEIGHT);
+        
+        // Check if on snake
+        validPosition = true;
+        for segment in snake {
+            if segment[0] == x && segment[1] == y {
+                validPosition = false;
+                break;
+            }
+        }
+        
+        if validPosition {
+            food = [x, y];
+        }
+    }
+}
+
+fn clamp(x, min, max) {
+    if x <min {
+        return min;
+    }
+    if x > max {
+        return max;
+    }
+    return x;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Game Logic
+// ═══════════════════════════════════════════════════════════════
+
+fn updateGame() {
+    if gameOver || gamePaused {
+        return;
+    }
+    
+    // Update direction (ignore reverse direction)
+    direction = nextDirection;
+    
+    // Calculate new head position
+    var head = snake[0];
+    var newHead = [head[0], head[1]];
+    
+    match direction {
+        case "up":
+            newHead[1] = newHead[1] - 1;
+        case "down":
+            newHead[1] = newHead[1] + 1;
+        case "left":
+            newHead[0] = newHead[0] - 1;
+        case "right":
+            newHead[0] = newHead[0] + 1;
+    }
+    
+    // Check wall collision (wrap around)
+    newHead[0] = (newHead[0] + GRID_WIDTH) % GRID_WIDTH;
+    newHead[1] = (newHead[1] + GRID_HEIGHT) % GRID_HEIGHT;
+    
+    // Check self collision
+    for segment in snake {
+        if segment[0] == newHead[0] && segment[1] == newHead[1] {
+            gameOver = true;
+            return;
+        }
+    }
+    
+    // Add new head
+    snake.insert(0, newHead);
+    
+    // Check food collision
+    if newHead[0] == food[0] && newHead[1] == food[1] {
+        score = score + 10;
+        spawnFood();
+    } else {
+        // Remove tail if no food eaten
+        snake.pop();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Rendering
+// ═══════════════════════════════════════════════════════════════
+
+fn renderGame(canvas) {
+    // Clear canvas
+    canvas.clear(ui.Color.Black);
+    
+    // Draw grid (optional)
+    for x in 0..GRID_WIDTH by 5 {
+        canvas.drawLine(
+            x * TILE_SIZE, 0,
+            x * TILE_SIZE, WINDOW_HEIGHT - 50,
+            ui.Color(50, 50, 50)
+        );
+    }
+    
+    for y in 0..GRID_HEIGHT by 5 {
+        canvas.drawLine(
+            0, y * TILE_SIZE,
+            WINDOW_WIDTH, y * TILE_SIZE,
+            ui.Color(50, 50, 50)
+        );
+    }
+    
+    // Draw food (red square)
+    var foodX = food[0] * TILE_SIZE;
+    var foodY = food[1] * TILE_SIZE;
+    canvas.drawRect(
+        foodX, foodY,
+        TILE_SIZE, TILE_SIZE,
+        ui.Color.Red,
+        true
+    );
+    
+    // Draw snake
+    for i in 0..snake.len() {
+        var segment = snake[i];
+        var x = segment[0] * TILE_SIZE;
+        var y = segment[1] * TILE_SIZE;
+        
+        // Head is brighter green
+        var color = ui.Color.Green;
+        if i == 0 {
+            color = ui.Color(0, 255, 100);
+        }
+        
+        canvas.drawRect(
+            x, y,
+            TILE_SIZE - 1, TILE_SIZE - 1,
+            color,
+            true
+        );
+    }
+    
+    // Draw score
+    canvas.drawText(5, WINDOW_HEIGHT - 45, "Score: " + score, ui.Color.White);
+    
+    // Draw status
+    var status = "";
+    if gamePaused {
+        status = "PAUSED - Press SPACE to resume";
+    } else if gameOver {
+        status = "GAME OVER - Press R to restart";
+    } else {
+        status = "Arrow Keys to move, SPACE to pause, ESC to quit";
+    }
+    canvas.drawText(5, WINDOW_HEIGHT - 20, status, ui.Color.Yellow);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Main Game Loop
+// ═══════════════════════════════════════════════════════════════
+
+fn main() {
+    // Create window and canvas
+    var window = ui.Window("Snake Game", WINDOW_WIDTH, WINDOW_HEIGHT);
+    var canvas = ui.Canvas(WINDOW_WIDTH, WINDOW_HEIGHT - 50);
+    
+    window.addWidget(canvas);
+    
+    // Initialize game
+    initGame();
+    lastUpdateTime = time.millis();
+    
+    // Handle input
+    window.setEventCallback((event) => {
+        match event.type {
+            case EventType.KeyDown:
+                match event.key.character {
+                    case 'w':
+                        nextDirection = "up";
+                    case 's':
+                        nextDirection = "down";
+                    case 'a':
+                        nextDirection = "left";
+                    case 'd':
+                        nextDirection = "right";
+                    case ' ':
+                        gamePaused = !gamePaused;
+                    case 'r':
+                        initGame();
+                }
+                
+                // Arrow keys (if supported)
+                match event.key.keyCode {
+                    case 38:  // Up arrow
+                        nextDirection = "up";
+                    case 40:  // Down arrow
+                        nextDirection = "down";
+                    case 37:  // Left arrow
+                        nextDirection = "left";
+                    case 39:  // Right arrow
+                        nextDirection = "right";
+                    case 27:  // ESC
+                        window.close();
+                }
+        }
+    });
+    
+    // Game update callback
+    window.setUpdateCallback(() => {
+        var currentTime = time.millis();
+        
+        // Update game at fixed rate
+        if currentTime - lastUpdateTime >= UPDATE_RATE {
+            updateGame();
+            lastUpdateTime = currentTime;
+        }
+        
+        // Render
+        renderGame(canvas);
+    });
+    
+    print("═══════════════════════════════════════════════════════════");
+    print("  SNAKE GAME - Vibe Implementation");
+    print("═══════════════════════════════════════════════════════════");
+    print("Controls:");
+    print("  W/A/S/D or Arrow Keys - Move snake");
+    print("  SPACE - Pause/Resume");
+    print("  R - Restart game");
+    print("  ESC - Quit");
+    print("═══════════════════════════════════════════════════════════");
+    
+    // Show window and start game
+    window.show();
+}
+
+// Start the game
+main();

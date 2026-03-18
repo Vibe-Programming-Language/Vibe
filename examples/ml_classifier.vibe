@@ -1,0 +1,38 @@
+import vibe.ml;
+
+// Simple binary classifier example using VibeML
+
+var xTrain = [
+    [0.0, 0.0],
+    [0.0, 1.0],
+    [1.0, 0.0],
+    [1.0, 1.0],
+    [0.2, 0.1],
+    [0.9, 0.8],
+    [0.1, 0.9],
+    [0.8, 0.2]
+];
+
+// Label rule: class 1 when sum > 1.0
+var yTrain = [0, 0, 0, 1, 0, 1, 0, 0];
+
+var model = ml.Model();
+model.add(ml.Dense(2, 8, "relu"));
+model.add(ml.Dense(8, 4, "relu"));
+model.add(ml.Dense(4, 1, "sigmoid"));
+
+model.compile(ml.Adam(0.01), "binary_crossentropy", ["accuracy"]);
+model.fit(xTrain, yTrain, 200, 4, true);
+
+var xTest = [
+    [0.1, 0.2],
+    [0.4, 0.7],
+    [0.7, 0.7],
+    [1.0, 0.2]
+];
+
+var preds = model.predict(xTest);
+print("Predictions: " + str(preds));
+
+model.save("simple_classifier.vibemodel");
+print("Saved model to simple_classifier.vibemodel");

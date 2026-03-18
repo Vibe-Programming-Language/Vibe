@@ -1,0 +1,20 @@
+import vibe.hardware;
+
+var serial = hardware.Serial(115200);
+serial.setDevice("/dev/serial0");
+serial.begin(115200);
+
+var sensor = hardware.ADC(0);
+sensor.setResolution(10);
+
+print("Sensor logger started. Writing CSV to serial output...");
+print("timestamp_ms,raw,voltage");
+
+while true {
+    var now = hardware.time.millis();
+    var raw = sensor.read();
+    var voltage = sensor.readVoltage(3.3);
+
+    serial.printf("%d,%d,%.4f\n", now, raw, voltage);
+    hardware.time.delay(500);
+}

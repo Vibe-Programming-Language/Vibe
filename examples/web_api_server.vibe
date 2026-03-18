@@ -1,0 +1,62 @@
+import vibe.web;
+
+var app = web.App();
+var users = [
+    {"id": 1, "name": "Ada", "role": "admin"},
+    {"id": 2, "name": "Linus", "role": "developer"}
+];
+
+fn toInt(text) {
+    return int(text);
+}
+
+app.use(web.middleware.logging());
+app.use(web.middleware.cors());
+app.use(web.middleware.jsonParser());
+
+app.get("/health", (req, res) => {
+    res.json({"status": "ok", "service": "vibe-api"});
+});
+
+app.get("/users", (req, res) => {
+    res.json(users);
+});
+
+app.get("/users/<id>", (req, res) => {
+    var id = toInt(req.param("id"));
+    for var user in users {
+        if (user["id"] == id) {
+            res.json(user);
+            return;
+        }
+    }
+    res.status(404).json({"error": "User not found"});
+});
+
+app.post("/users", (req, res) => {
+    var payload = req.json();
+    var nextId = users.length() + 1;
+    var user = {
+        "id": nextId,
+        "name": payload.get("name", "Unnamed"),
+        "role": payload.get("role", "user")
+    };
+    users.push(user);
+    res.status(201).json(user);
+});
+
+app.delete("/users/<id>", (req, res) => {
+    var id = toInt(req.param("id"));
+    for var i in range(0, users.length()) {
+        if (users[i]["id"] == id) {
+            users.removeAt(i);
+            res.json({"deleted": id});
+            return;
+        }
+    }
+    res.status(404).json({"error": "User not found"});
+});
+
+app.setPort(8080);
+print("Vibe API running at http://localhost:8080");
+app.listen();
