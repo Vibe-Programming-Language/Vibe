@@ -16,7 +16,13 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+
+#if !defined(VIBE_DISABLE_SDL)
 #include <SDL2/SDL.h>
+#define VIBE_HAS_SDL 1
+#else
+#define VIBE_HAS_SDL 0
+#endif
 
 namespace nova {
 
@@ -331,6 +337,7 @@ static Value runSequentialPredict(const MapValue& model, const Value& input) {
   return Value(makeTensor(x, {static_cast<int64_t>(x.size())}));
 }
 
+#if VIBE_HAS_SDL
 struct GuiRuntimeState {
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
@@ -355,6 +362,7 @@ static void setRendererColorFromValue(const Value& colorVal) {
   }
   SDL_SetRenderDrawColor(gGui.renderer, r, g, b, a);
 }
+#endif
 
 // ═══════════════════════════════════════════════════
 //  Environment
@@ -3283,6 +3291,11 @@ Value Interpreter::memberCall(const SourcePos& pos, Value& obj,
     }
 
     if (kindStr == "ui.Window") {
+#if !VIBE_HAS_SDL
+      if (member == "show") {
+        throw RuntimeError(pos, "ui.Window.show() is unavailable in this build (SDL disabled)");
+      }
+#else
       if (member == "setUpdateCallback") {
         if (args.size() != 1) throw RuntimeError(pos, "setUpdateCallback() expects 1 argument");
         mapSetValue(*mv, "__updateCb", args[0]);
@@ -3384,9 +3397,13 @@ Value Interpreter::memberCall(const SourcePos& pos, Value& obj,
         gGui.window = nullptr;
         return std::monostate{};
       }
+#endif
     }
 
     if (kindStr == "ui.Canvas") {
+#if !VIBE_HAS_SDL
+      throw RuntimeError(pos, "ui.Canvas methods are unavailable in this build (SDL disabled)");
+#else
       if (member == "clear") {
         if (gGui.renderer) {
           Value color = args.empty() ? Value(std::monostate{}) : args[0];
@@ -3452,6 +3469,7 @@ Value Interpreter::memberCall(const SourcePos& pos, Value& obj,
         }
         return std::monostate{};
       }
+#endif
     }
 
     if (member == "get") {

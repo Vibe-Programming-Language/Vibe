@@ -6,11 +6,10 @@
 ; ──────────────────────────────────────────────────
 
 !include "MUI2.nsh"
-!include "EnvVarUpdate.nsh"
 
 ; ── Metadata ──
 !define PRODUCT_NAME "Vibe"
-!define PRODUCT_VERSION "1.1.0"
+!define PRODUCT_VERSION "1.2.0"
 !define PRODUCT_PUBLISHER "Vibe Language Team"
 !define PRODUCT_WEB_SITE "https://vibelang.dev"
 
@@ -20,7 +19,6 @@ InstallDir "$LOCALAPPDATA\${PRODUCT_NAME}"
 RequestExecutionLevel user
 
 ; ── UI ──
-!define MUI_ICON "..\..\vibe-vscode\images\vibe-icon.ico"
 !define MUI_ABORTWARNING
 
 !insertmacro MUI_PAGE_WELCOME
@@ -38,7 +36,7 @@ Section "Vibe Language" SecMain
   SetOutPath "$INSTDIR"
 
   ; Core binary
-  File "..\..\build\vibe.exe"
+  File "..\..\build-win\vibe.exe"
 
   ; Documentation
   File "..\..\README.md"
@@ -51,15 +49,14 @@ Section "Vibe Language" SecMain
   File "..\..\examples\match_demo.vibe"
   File "..\..\examples\showcase.vibe"
   File "..\..\examples\snake.vibe"
+  File "..\..\examples\neural_mvp.vibe"
+  File "..\..\examples\dsa_graph_mvp.vibe"
+  File "..\..\examples\data_image_ai_mvp.vibe"
 
   ; Back to root
   SetOutPath "$INSTDIR"
 
-  ; Add to user PATH
-  ${EnvVarUpdate} $0 "PATH" "A" "HKCU" "$INSTDIR"
-
-  ; Broadcast environment change
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+  ; PATH update omitted in this portable installer build.
 
   ; Write uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -83,9 +80,6 @@ SectionEnd
 
 ; ── Uninstall Section ──
 Section "Uninstall"
-  ; Remove from PATH
-  ${un.EnvVarUpdate} $0 "PATH" "R" "HKCU" "$INSTDIR"
-
   ; Remove files
   Delete "$INSTDIR\vibe.exe"
   Delete "$INSTDIR\README.md"
@@ -98,6 +92,9 @@ Section "Uninstall"
   Delete "$INSTDIR\examples\match_demo.vibe"
   Delete "$INSTDIR\examples\showcase.vibe"
   Delete "$INSTDIR\examples\snake.vibe"
+  Delete "$INSTDIR\examples\neural_mvp.vibe"
+  Delete "$INSTDIR\examples\dsa_graph_mvp.vibe"
+  Delete "$INSTDIR\examples\data_image_ai_mvp.vibe"
   RMDir "$INSTDIR\examples"
 
   ; Remove install directory
@@ -106,7 +103,5 @@ Section "Uninstall"
   ; Remove registry entries
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 
-  ; Broadcast environment change
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 SectionEnd
 
