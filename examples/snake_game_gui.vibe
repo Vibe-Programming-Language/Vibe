@@ -6,6 +6,7 @@
 
 import vibe.ui;
 import vibe.time;
+import math;
 
 // Game constants
 const GRID_WIDTH = 30;
@@ -51,30 +52,30 @@ fn initGame() {
 fn spawnFood() {
     var validPosition = false;
     
-    while !validPosition {
+    while (!validPosition) {
         var x = math.floor(math.random() * GRID_WIDTH);
         var y = math.floor(math.random() * GRID_HEIGHT);
         
         // Check if on snake
         validPosition = true;
-        for segment in snake {
-            if segment[0] == x && segment[1] == y {
+        for var segment in snake {
+            if (segment[0] == x && segment[1] == y) {
                 validPosition = false;
                 break;
             }
         }
         
-        if validPosition {
+        if (validPosition) {
             food = [x, y];
         }
     }
 }
 
 fn clamp(x, min, max) {
-    if x <min {
+    if (x < min) {
         return min;
     }
-    if x > max {
+    if (x > max) {
         return max;
     }
     return x;
@@ -85,7 +86,7 @@ fn clamp(x, min, max) {
 // ═══════════════════════════════════════════════════════════════
 
 fn updateGame() {
-    if gameOver || gamePaused {
+    if (gameOver || gamePaused) {
         return;
     }
     
@@ -96,15 +97,14 @@ fn updateGame() {
     var head = snake[0];
     var newHead = [head[0], head[1]];
     
-    match direction {
-        case "up":
-            newHead[1] = newHead[1] - 1;
-        case "down":
-            newHead[1] = newHead[1] + 1;
-        case "left":
-            newHead[0] = newHead[0] - 1;
-        case "right":
-            newHead[0] = newHead[0] + 1;
+    if (direction == "up") {
+        newHead[1] = newHead[1] - 1;
+    } else if (direction == "down") {
+        newHead[1] = newHead[1] + 1;
+    } else if (direction == "left") {
+        newHead[0] = newHead[0] - 1;
+    } else {
+        newHead[0] = newHead[0] + 1;
     }
     
     // Check wall collision (wrap around)
@@ -112,8 +112,8 @@ fn updateGame() {
     newHead[1] = (newHead[1] + GRID_HEIGHT) % GRID_HEIGHT;
     
     // Check self collision
-    for segment in snake {
-        if segment[0] == newHead[0] && segment[1] == newHead[1] {
+    for var segment in snake {
+        if (segment[0] == newHead[0] && segment[1] == newHead[1]) {
             gameOver = true;
             return;
         }
@@ -123,7 +123,7 @@ fn updateGame() {
     snake.insert(0, newHead);
     
     // Check food collision
-    if newHead[0] == food[0] && newHead[1] == food[1] {
+    if (newHead[0] == food[0] && newHead[1] == food[1]) {
         score = score + 10;
         spawnFood();
     } else {
@@ -141,20 +141,24 @@ fn renderGame(canvas) {
     canvas.clear(ui.Color.Black);
     
     // Draw grid (optional)
-    for x in 0..GRID_WIDTH by 5 {
+    var x = 0;
+    while (x < GRID_WIDTH) {
         canvas.drawLine(
             x * TILE_SIZE, 0,
             x * TILE_SIZE, WINDOW_HEIGHT - 50,
             ui.Color(50, 50, 50)
         );
+        x = x + 5;
     }
     
-    for y in 0..GRID_HEIGHT by 5 {
+    var y = 0;
+    while (y < GRID_HEIGHT) {
         canvas.drawLine(
             0, y * TILE_SIZE,
             WINDOW_WIDTH, y * TILE_SIZE,
             ui.Color(50, 50, 50)
         );
+        y = y + 5;
     }
     
     // Draw food (red square)
@@ -168,14 +172,15 @@ fn renderGame(canvas) {
     );
     
     // Draw snake
-    for i in 0..snake.len() {
+    var i = 0;
+    while (i < len(snake)) {
         var segment = snake[i];
         var x = segment[0] * TILE_SIZE;
         var y = segment[1] * TILE_SIZE;
         
         // Head is brighter green
         var color = ui.Color.Green;
-        if i == 0 {
+        if (i == 0) {
             color = ui.Color(0, 255, 100);
         }
         
@@ -185,6 +190,7 @@ fn renderGame(canvas) {
             color,
             true
         );
+        i = i + 1;
     }
     
     // Draw score
@@ -192,9 +198,9 @@ fn renderGame(canvas) {
     
     // Draw status
     var status = "";
-    if gamePaused {
+    if (gamePaused) {
         status = "PAUSED - Press SPACE to resume";
-    } else if gameOver {
+    } else if (gameOver) {
         status = "GAME OVER - Press R to restart";
     } else {
         status = "Arrow Keys to move, SPACE to pause, ESC to quit";
@@ -219,36 +225,35 @@ fn main() {
     
     // Handle input
     window.setEventCallback((event) => {
-        match event.type {
-            case EventType.KeyDown:
-                match event.key.character {
-                    case 'w':
-                        nextDirection = "up";
-                    case 's':
-                        nextDirection = "down";
-                    case 'a':
-                        nextDirection = "left";
-                    case 'd':
-                        nextDirection = "right";
-                    case ' ':
-                        gamePaused = !gamePaused;
-                    case 'r':
-                        initGame();
-                }
-                
-                // Arrow keys (if supported)
-                match event.key.keyCode {
-                    case 38:  // Up arrow
-                        nextDirection = "up";
-                    case 40:  // Down arrow
-                        nextDirection = "down";
-                    case 37:  // Left arrow
-                        nextDirection = "left";
-                    case 39:  // Right arrow
-                        nextDirection = "right";
-                    case 27:  // ESC
-                        window.close();
-                }
+        if (event.type == ui.EventType.KeyDown) {
+            var ch = event.key.character;
+            if (ch == 'w') {
+                nextDirection = "up";
+            } else if (ch == 's') {
+                nextDirection = "down";
+            } else if (ch == 'a') {
+                nextDirection = "left";
+            } else if (ch == 'd') {
+                nextDirection = "right";
+            } else if (ch == ' ') {
+                gamePaused = !gamePaused;
+            } else if (ch == 'r') {
+                initGame();
+            }
+
+            // Arrow keys (if supported)
+            var keyCode = event.key.keyCode;
+            if (keyCode == 38) {
+                nextDirection = "up";
+            } else if (keyCode == 40) {
+                nextDirection = "down";
+            } else if (keyCode == 37) {
+                nextDirection = "left";
+            } else if (keyCode == 39) {
+                nextDirection = "right";
+            } else if (keyCode == 27) {
+                window.close();
+            }
         }
     });
     
@@ -257,7 +262,7 @@ fn main() {
         var currentTime = time.millis();
         
         // Update game at fixed rate
-        if currentTime - lastUpdateTime >= UPDATE_RATE {
+        if (currentTime - lastUpdateTime >= UPDATE_RATE) {
             updateGame();
             lastUpdateTime = currentTime;
         }

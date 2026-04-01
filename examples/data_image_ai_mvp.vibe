@@ -1,0 +1,21 @@
+import data;
+import image;
+import ai;
+
+fn main() {
+    var df = data.DataFrame({
+        "age": [21, 33, 27],
+        "score": [90, 75, 88]
+    });
+
+    print("shape=" + df.shape());
+    print("cols=" + df.columns());
+
+    var img = image.load("cat.jpg");
+    img.resize(224, 224).grayscale().save("out.jpg");
+    print(img);
+
+    var yTrue = [1, 0, 1, 1];
+    var yPred = [1, 0, 0, 1];
+    print("acc=" + ai.accuracy(yTrue, yPred));
+}

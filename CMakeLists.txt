@@ -16,8 +16,11 @@ add_executable(vibe
 target_include_directories(vibe PRIVATE src)
 target_compile_options(vibe PRIVATE -Wall -Wextra -Wpedantic)
 
+find_package(SDL2 REQUIRED)
+target_include_directories(vibe PRIVATE ${SDL2_INCLUDE_DIRS})
+
 # Link filesystem (required on some older g++ versions)
-target_link_libraries(vibe PRIVATE stdc++fs)
+target_link_libraries(vibe PRIVATE stdc++fs ${SDL2_LIBRARIES})
 
 # ── Install rules ─────────────────────────────────
 install(TARGETS vibe RUNTIME DESTINATION bin)

@@ -10,7 +10,7 @@ sensor.setResolution(10);
 print("Sensor logger started. Writing CSV to serial output...");
 print("timestamp_ms,raw,voltage");
 
-while true {
+while (true) {
     var now = hardware.time.millis();
     var raw = sensor.read();
     var voltage = sensor.readVoltage(3.3);

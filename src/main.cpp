@@ -13,7 +13,7 @@
 
 namespace fs = std::filesystem;
 
-static const char* VERSION = "1.1.0";
+static const char* VERSION = "1.2.0";
 
 static void printUsage() {
   std::cout << "Vibe Programming Language v" << VERSION << "\n\n";
@@ -211,7 +211,7 @@ static void updateVibe() {
 }
 
 static void printReplWelcome() {
-  std::cout << "\033[1;35m";
+  std::cout << "\033[1;37m";
   std::cout << R"(
  ██╗   ██╗██╗██████╗ ███████╗
  ██║   ██║██║██╔══██╗██╔════╝
@@ -262,11 +262,13 @@ static void repl() {
   // Keep parsed programs alive so function bodies (raw Stmt pointers) remain valid
   std::vector<nova::Program> programs;
   int lineNum = 1;
+  const char kSpinnerFrames[] = {'|', '/', '-', '\\'};
 
   while (true) {
-    if (buffer.empty())
-      std::cout << "\033[1;32mvibe\033[0m \033[90m" << lineNum << "\033[0m\033[1;33m ❯ \033[0m";
-    else
+    if (buffer.empty()) {
+      char frame = kSpinnerFrames[lineNum % 4];
+      std::cout << "\033[1;37mvibe\033[0m \033[90m" << lineNum << "\033[0m\033[1;37m [" << frame << "] > \033[0m";
+    } else
       std::cout << "\033[1;33m ... \033[0m";
     std::cout.flush();
 

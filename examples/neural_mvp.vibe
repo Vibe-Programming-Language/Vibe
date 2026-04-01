@@ -1,0 +1,33 @@
+import neural;
+
+fn main() {
+    var model = neural.Sequential([
+        neural.Dense(2, 4, "relu"),
+        neural.Dense(4, 2, "softmax")
+    ]);
+
+    model.compile(neural.Adam(0.001), neural.CrossEntropyLoss());
+
+    var trainX = [
+        [0.0, 1.0],
+        [1.0, 0.0],
+        [1.0, 1.0],
+        [0.0, 0.0]
+    ];
+
+    var trainY = [
+        [1.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.0, 1.0]
+    ];
+
+    var history = model.fit(trainX, trainY, 3);
+    print("history=" + history);
+
+    var pred = model.predict([0.2, 0.9]);
+    print("pred=" + pred);
+
+    var metrics = model.evaluate(trainX, trainY);
+    print("metrics=" + metrics);
+}

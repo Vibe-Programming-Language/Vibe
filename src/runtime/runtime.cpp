@@ -10,9 +10,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <queue>
 #include <random>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
+#include <SDL2/SDL.h>
 
 namespace nova {
 
@@ -125,6 +129,231 @@ bool valuesEqual(const Value& a, const Value& b) {
   if (auto da = std::get_if<double>(&a)) return *da == std::get<double>(b);
   if (auto sa = std::get_if<std::string>(&a)) return *sa == std::get<std::string>(b);
   return toString(a) == toString(b);
+}
+
+static Value mapGetValue(const MapValue& mv, const std::string& key) {
+  for (const auto& entry : mv.entries) {
+    if (entry.first == key) return entry.second->val;
+  }
+  return std::monostate{};
+}
+
+static const Value* mapGetValuePtr(const MapValue& mv, const std::string& key) {
+  for (const auto& entry : mv.entries) {
+    if (entry.first == key) return &entry.second->val;
+  }
+  return nullptr;
+}
+
+static Value* mapGetValuePtr(MapValue& mv, const std::string& key) {
+  for (auto& entry : mv.entries) {
+    if (entry.first == key) return &entry.second->val;
+  }
+  return nullptr;
+}
+
+static void mapSetValue(MapValue& mv, const std::string& key, Value value) {
+  for (auto& entry : mv.entries) {
+    if (entry.first == key) {
+      entry.second->val = std::move(value);
+      return;
+    }
+  }
+  mv.entries.push_back({key, std::make_shared<ValueBox>(std::move(value))});
+}
+
+static ListValue toListValue(const std::vector<double>& vals) {
+  ListValue lv;
+  for (double v : vals) lv.elements.push_back(std::make_shared<ValueBox>(Value(v)));
+  return lv;
+}
+
+static ListValue toListValue(const std::vector<int64_t>& vals) {
+  ListValue lv;
+  for (int64_t v : vals) lv.elements.push_back(std::make_shared<ValueBox>(Value(v)));
+  return lv;
+}
+
+static std::vector<int64_t> readIntList(const Value& v) {
+  std::vector<int64_t> out;
+  auto* lv = std::get_if<ListValue>(&v);
+  if (!lv) return out;
+  for (const auto& el : lv->elements) {
+    if (auto* i = std::get_if<int64_t>(&el->val)) out.push_back(*i);
+    else if (auto* d = std::get_if<double>(&el->val)) out.push_back(static_cast<int64_t>(*d));
+  }
+  return out;
+}
+
+static std::vector<double> readNumList(const Value& v) {
+  std::vector<double> out;
+  auto* lv = std::get_if<ListValue>(&v);
+  if (!lv) return out;
+  for (const auto& el : lv->elements) {
+    if (auto* i = std::get_if<int64_t>(&el->val)) out.push_back(static_cast<double>(*i));
+    else if (auto* d = std::get_if<double>(&el->val)) out.push_back(*d);
+    else if (auto* b = std::get_if<bool>(&el->val)) out.push_back(*b ? 1.0 : 0.0);
+  }
+  return out;
+}
+
+static int64_t product(const std::vector<int64_t>& shape) {
+  if (shape.empty()) return 0;
+  int64_t p = 1;
+  for (int64_t d : shape) p *= d;
+  return p;
+}
+
+static MapValue makeTensor(std::vector<double> data,
+                           std::vector<int64_t> shape,
+                           bool requiresGrad = false,
+                           const std::string& device = "cpu") {
+  if (shape.empty()) shape = {static_cast<int64_t>(data.size())};
+  if (product(shape) != static_cast<int64_t>(data.size())) {
+    data.resize(std::max<int64_t>(1, product(shape)), 0.0);
+  }
+  MapValue t;
+  mapSetValue(t, "__kind", std::string("neural.Tensor"));
+  mapSetValue(t, "shape", Value(toListValue(shape)));
+  mapSetValue(t, "data", Value(toListValue(data)));
+  mapSetValue(t, "requiresGrad", requiresGrad);
+  mapSetValue(t, "device", std::string(device));
+  mapSetValue(t, "_grad", std::monostate{});
+  return t;
+}
+
+static std::vector<double> tensorData(const MapValue& t) {
+  return readNumList(mapGetValue(t, "data"));
+}
+
+static std::vector<int64_t> tensorShape(const MapValue& t) {
+  return readIntList(mapGetValue(t, "shape"));
+}
+
+static MapValue tensorFromValue(const Value& v) {
+  if (auto* mv = std::get_if<MapValue>(&v)) {
+    const Value* kind = mapGetValuePtr(*mv, "__kind");
+    if (kind && std::holds_alternative<std::string>(*kind)) {
+      std::string ks = std::get<std::string>(*kind);
+      if (ks == "Tensor" || ks == "neural.Tensor") return *mv;
+    }
+  }
+  // Support construction from numeric list
+  auto data = readNumList(v);
+  if (!data.empty()) return makeTensor(data, {static_cast<int64_t>(data.size())});
+  return makeTensor({0.0}, {1});
+}
+
+static std::vector<double> valueToVector(const Value& v) {
+  if (auto* i = std::get_if<int64_t>(&v)) return {static_cast<double>(*i)};
+  if (auto* d = std::get_if<double>(&v)) return {*d};
+  if (auto* b = std::get_if<bool>(&v)) return {*b ? 1.0 : 0.0};
+  if (auto* mv = std::get_if<MapValue>(&v)) {
+    const Value* kind = mapGetValuePtr(*mv, "__kind");
+    if (kind && std::holds_alternative<std::string>(*kind) &&
+        (std::get<std::string>(*kind) == "neural.Tensor" || std::get<std::string>(*kind) == "Tensor")) {
+      return tensorData(*mv);
+    }
+  }
+  return readNumList(v);
+}
+
+static std::vector<double> applyActivation(std::vector<double> x, const std::string& activation) {
+  if (activation == "relu") {
+    for (double& v : x) v = std::max(0.0, v);
+    return x;
+  }
+  if (activation == "sigmoid") {
+    for (double& v : x) v = 1.0 / (1.0 + std::exp(-v));
+    return x;
+  }
+  if (activation == "tanh") {
+    for (double& v : x) v = std::tanh(v);
+    return x;
+  }
+  if (activation == "softmax") {
+    if (x.empty()) return x;
+    double m = *std::max_element(x.begin(), x.end());
+    double s = 0.0;
+    for (double& v : x) { v = std::exp(v - m); s += v; }
+    if (s == 0.0) return x;
+    for (double& v : x) v /= s;
+    return x;
+  }
+  return x;
+}
+
+static std::vector<double> denseForward(const MapValue& layer, const std::vector<double>& input) {
+  Value inV = mapGetValue(layer, "inputSize");
+  Value outV = mapGetValue(layer, "outputSize");
+  int64_t in = std::holds_alternative<int64_t>(inV)
+                 ? std::get<int64_t>(inV)
+                 : static_cast<int64_t>(std::holds_alternative<double>(inV) ? std::get<double>(inV) : 0.0);
+  int64_t out = std::holds_alternative<int64_t>(outV)
+                  ? std::get<int64_t>(outV)
+                  : static_cast<int64_t>(std::holds_alternative<double>(outV) ? std::get<double>(outV) : 0.0);
+  std::string activation = toString(mapGetValue(layer, "activation"));
+
+  auto w = readNumList(mapGetValue(layer, "weights"));
+  auto b = readNumList(mapGetValue(layer, "bias"));
+  if (static_cast<int64_t>(w.size()) != in * out || static_cast<int64_t>(b.size()) != out ||
+      static_cast<int64_t>(input.size()) != in) {
+    return std::vector<double>(static_cast<size_t>(out), 0.0);
+  }
+
+  std::vector<double> y(static_cast<size_t>(out), 0.0);
+  for (int64_t o = 0; o < out; ++o) {
+    double acc = b[static_cast<size_t>(o)];
+    for (int64_t i = 0; i < in; ++i) {
+      acc += input[static_cast<size_t>(i)] * w[static_cast<size_t>(o * in + i)];
+    }
+    y[static_cast<size_t>(o)] = acc;
+  }
+  return applyActivation(std::move(y), activation);
+}
+
+static Value runSequentialPredict(const MapValue& model, const Value& input) {
+  const Value* layersVal = mapGetValuePtr(model, "layers");
+  auto* layers = layersVal ? std::get_if<ListValue>(layersVal) : nullptr;
+  if (!layers) return std::monostate{};
+
+  std::vector<double> x = valueToVector(input);
+  if (x.empty()) return std::monostate{};
+
+  for (const auto& l : layers->elements) {
+    auto* layerMap = std::get_if<MapValue>(&l->val);
+    if (!layerMap) continue;
+    std::string kind = toString(mapGetValue(*layerMap, "__kind"));
+    if (kind == "neural.Dense") {
+      x = denseForward(*layerMap, x);
+    }
+  }
+  return Value(makeTensor(x, {static_cast<int64_t>(x.size())}));
+}
+
+struct GuiRuntimeState {
+  SDL_Window* window = nullptr;
+  SDL_Renderer* renderer = nullptr;
+  bool initialized = false;
+};
+
+static GuiRuntimeState gGui;
+
+static Uint8 valueAsU8(const Value& v, Uint8 fallback = 0) {
+  if (auto p = std::get_if<int64_t>(&v)) return static_cast<Uint8>(std::max<int64_t>(0, std::min<int64_t>(255, *p)));
+  if (auto p = std::get_if<double>(&v)) return static_cast<Uint8>(std::max(0.0, std::min(255.0, *p)));
+  return fallback;
+}
+
+static void setRendererColorFromValue(const Value& colorVal) {
+  Uint8 r = 255, g = 255, b = 255, a = 255;
+  if (auto* mv = std::get_if<MapValue>(&colorVal)) {
+    r = valueAsU8(mapGetValue(*mv, "r"), 255);
+    g = valueAsU8(mapGetValue(*mv, "g"), 255);
+    b = valueAsU8(mapGetValue(*mv, "b"), 255);
+    a = valueAsU8(mapGetValue(*mv, "a"), 255);
+  }
+  SDL_SetRenderDrawColor(gGui.renderer, r, g, b, a);
 }
 
 // ═══════════════════════════════════════════════════
@@ -1062,11 +1291,17 @@ void Interpreter::execImport(const ImportStmt& imp) {
     moduleName += imp.path[i2].lexeme;
   }
 
+  std::string normalized = moduleName;
+  if (normalized.rfind("vibe.", 0) == 0) {
+    normalized = normalized.substr(5);
+  }
+
   if (importedModules_.count(moduleName)) return;
   importedModules_[moduleName] = true;
+  importedModules_[normalized] = true;
 
   // Built-in math module
-  if (moduleName == "math") {
+  if (normalized == "math") {
     auto mathEnv = std::make_shared<Env>(env_);
     env_->define("math", std::monostate{}, true); // placeholder
     // Register math functions as global builtins with math. prefix
@@ -1166,7 +1401,7 @@ void Interpreter::execImport(const ImportStmt& imp) {
   }
 
   // Built-in io module
-  if (moduleName == "io") {
+  if (normalized == "io") {
     importedModules_["io"] = true;
     registerBuiltin("io.readFile", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
       if (args.size() != 1) throw RuntimeError(pos, "io.readFile expects 1 arg");
@@ -1217,7 +1452,7 @@ void Interpreter::execImport(const ImportStmt& imp) {
   }
 
   // Built-in os module
-  if (moduleName == "os") {
+  if (normalized == "os") {
     importedModules_["os"] = true;
     registerBuiltin("os.exec", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
       if (args.size() != 1) throw RuntimeError(pos, "os.exec expects 1 arg");
@@ -1254,7 +1489,7 @@ void Interpreter::execImport(const ImportStmt& imp) {
   }
 
   // Built-in time module
-  if (moduleName == "time") {
+  if (normalized == "time") {
     importedModules_["time"] = true;
     registerBuiltin("time.now", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
       auto now = std::chrono::system_clock::now();
@@ -1279,7 +1514,7 @@ void Interpreter::execImport(const ImportStmt& imp) {
   }
 
   // Built-in string module  
-  if (moduleName == "string") {
+  if (normalized == "string") {
     importedModules_["string"] = true;
     registerBuiltin("string.ascii_letters", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
       return std::string("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
@@ -1315,7 +1550,7 @@ void Interpreter::execImport(const ImportStmt& imp) {
   }
 
   // Built-in json module
-  if (moduleName == "json") {
+  if (normalized == "json") {
     importedModules_["json"] = true;
     registerBuiltin("json.stringify", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
       if (args.empty()) return std::string("null");
@@ -1350,7 +1585,7 @@ void Interpreter::execImport(const ImportStmt& imp) {
   }
 
   // Built-in collections module
-  if (moduleName == "collections") {
+  if (normalized == "collections") {
     importedModules_["collections"] = true;
     registerBuiltin("collections.Stack", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
       return Value(ListValue{});
@@ -1358,6 +1593,417 @@ void Interpreter::execImport(const ImportStmt& imp) {
     registerBuiltin("collections.Queue", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
       return Value(ListValue{});
     });
+    return;
+  }
+
+  // Built-in neural module (MVP)
+  if (normalized == "neural") {
+    importedModules_["neural"] = true;
+
+    registerBuiltin("neural.Tensor", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.empty()) return Value(makeTensor({0.0}, {1}));
+      // Tensor([2,3]) => zeros shape
+      auto shape = readIntList(args[0]);
+      if (!shape.empty()) return Value(makeTensor(std::vector<double>(product(shape), 0.0), shape));
+
+      // Tensor([[...], [...]]) => infer 2D
+      if (auto* outer = std::get_if<ListValue>(&args[0])) {
+        std::vector<double> flat;
+        int64_t rows = static_cast<int64_t>(outer->elements.size());
+        int64_t cols = 0;
+        bool is2d = true;
+        for (const auto& row : outer->elements) {
+          auto* inner = std::get_if<ListValue>(&row->val);
+          if (!inner) { is2d = false; break; }
+          if (cols == 0) cols = static_cast<int64_t>(inner->elements.size());
+          for (const auto& el : inner->elements) {
+            if (auto* i = std::get_if<int64_t>(&el->val)) flat.push_back(static_cast<double>(*i));
+            else if (auto* d = std::get_if<double>(&el->val)) flat.push_back(*d);
+            else throw RuntimeError(pos, "neural.Tensor expects numeric values");
+          }
+        }
+        if (is2d && rows > 0 && cols > 0) return Value(makeTensor(flat, {rows, cols}));
+      }
+
+      auto data = readNumList(args[0]);
+      if (!data.empty()) return Value(makeTensor(data, {static_cast<int64_t>(data.size())}));
+      throw RuntimeError(pos, "neural.Tensor expects shape list or numeric data list");
+    });
+
+    registerBuiltin("neural.zeros", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.empty()) throw RuntimeError(pos, "neural.zeros expects shape list");
+      auto shape = readIntList(args[0]);
+      if (shape.empty()) throw RuntimeError(pos, "neural.zeros expects numeric shape list");
+      return Value(makeTensor(std::vector<double>(product(shape), 0.0), shape));
+    });
+
+    registerBuiltin("neural.ones", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.empty()) throw RuntimeError(pos, "neural.ones expects shape list");
+      auto shape = readIntList(args[0]);
+      if (shape.empty()) throw RuntimeError(pos, "neural.ones expects numeric shape list");
+      return Value(makeTensor(std::vector<double>(product(shape), 1.0), shape));
+    });
+
+    registerBuiltin("neural.randn", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.empty()) throw RuntimeError(pos, "neural.randn expects shape list");
+      auto shape = readIntList(args[0]);
+      if (shape.empty()) throw RuntimeError(pos, "neural.randn expects numeric shape list");
+      std::mt19937 rng(std::random_device{}());
+      std::normal_distribution<double> dist(0.0, 1.0);
+      std::vector<double> data(product(shape));
+      for (double& x : data) x = dist(rng);
+      return Value(makeTensor(std::move(data), shape));
+    });
+
+    registerBuiltin("neural.relu", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      if (args.empty()) return Value(makeTensor({0.0}, {1}));
+      MapValue t = tensorFromValue(args[0]);
+      auto d = tensorData(t);
+      for (double& x : d) x = std::max(0.0, x);
+      return Value(makeTensor(d, tensorShape(t), isTruthy(mapGetValue(t, "requiresGrad")), toString(mapGetValue(t, "device"))));
+    });
+
+    registerBuiltin("neural.softmax", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      if (args.empty()) return Value(makeTensor({1.0}, {1}));
+      MapValue t = tensorFromValue(args[0]);
+      auto d = tensorData(t);
+      if (d.empty()) return Value(makeTensor({1.0}, {1}));
+      double mx = *std::max_element(d.begin(), d.end());
+      double sumExp = 0.0;
+      for (double& x : d) { x = std::exp(x - mx); sumExp += x; }
+      for (double& x : d) x /= sumExp;
+      return Value(makeTensor(d, tensorShape(t), isTruthy(mapGetValue(t, "requiresGrad")), toString(mapGetValue(t, "device"))));
+    });
+
+    registerBuiltin("neural.Dense", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.size() < 2) throw RuntimeError(pos, "neural.Dense expects inputSize, outputSize");
+      int64_t in = asInt(pos, args[0]);
+      int64_t out = asInt(pos, args[1]);
+
+      std::mt19937 rng(std::random_device{}());
+      std::normal_distribution<double> dist(0.0, std::sqrt(2.0 / std::max<int64_t>(1, in)));
+      std::vector<double> w(static_cast<size_t>(in * out));
+      for (double& x : w) x = dist(rng);
+      std::vector<double> b(static_cast<size_t>(out), 0.0);
+
+      MapValue layer;
+      mapSetValue(layer, "__kind", std::string("neural.Dense"));
+      mapSetValue(layer, "inputSize", in);
+      mapSetValue(layer, "outputSize", out);
+      mapSetValue(layer, "activation", args.size() > 2 ? toString(args[2]) : std::string("linear"));
+      mapSetValue(layer, "weights", Value(toListValue(w)));
+      mapSetValue(layer, "bias", Value(toListValue(b)));
+      return Value(std::move(layer));
+    });
+
+    registerBuiltin("neural.Sequential", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.empty() || !std::holds_alternative<ListValue>(args[0]))
+        throw RuntimeError(pos, "neural.Sequential expects layer list");
+      MapValue model;
+      mapSetValue(model, "__kind", std::string("neural.Model"));
+      mapSetValue(model, "layers", args[0]);
+      mapSetValue(model, "compiled", false);
+      return Value(std::move(model));
+    });
+
+    registerBuiltin("neural.CrossEntropyLoss", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
+      MapValue loss;
+      mapSetValue(loss, "__kind", std::string("neural.Loss"));
+      mapSetValue(loss, "name", std::string("CrossEntropyLoss"));
+      return Value(std::move(loss));
+    });
+
+    registerBuiltin("neural.Adam", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      MapValue opt;
+      mapSetValue(opt, "__kind", std::string("neural.Optimizer"));
+      mapSetValue(opt, "name", std::string("Adam"));
+      mapSetValue(opt, "lr", args.empty() ? Value(0.001) : args[0]);
+      return Value(std::move(opt));
+    });
+
+    registerBuiltin("neural.trainTestSplit", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.size() < 3) throw RuntimeError(pos, "neural.trainTestSplit expects data, labels, testSize");
+      auto* data = std::get_if<ListValue>(&args[0]);
+      auto* labels = std::get_if<ListValue>(&args[1]);
+      if (!data || !labels) throw RuntimeError(pos, "neural.trainTestSplit expects list data and labels");
+      double ts = asDouble(pos, args[2]);
+      int64_t n = static_cast<int64_t>(std::min(data->elements.size(), labels->elements.size()));
+      int64_t testN = static_cast<int64_t>(std::max(1.0, std::floor(n * ts)));
+      int64_t trainN = std::max<int64_t>(0, n - testN);
+
+      ListValue trainX, testX, trainY, testY;
+      for (int64_t i = 0; i < n; ++i) {
+        if (i < trainN) {
+          trainX.elements.push_back(std::make_shared<ValueBox>(data->elements[i]->val));
+          trainY.elements.push_back(std::make_shared<ValueBox>(labels->elements[i]->val));
+        } else {
+          testX.elements.push_back(std::make_shared<ValueBox>(data->elements[i]->val));
+          testY.elements.push_back(std::make_shared<ValueBox>(labels->elements[i]->val));
+        }
+      }
+
+      ListValue out;
+      out.elements.push_back(std::make_shared<ValueBox>(Value(std::move(trainX))));
+      out.elements.push_back(std::make_shared<ValueBox>(Value(std::move(testX))));
+      out.elements.push_back(std::make_shared<ValueBox>(Value(std::move(trainY))));
+      out.elements.push_back(std::make_shared<ValueBox>(Value(std::move(testY))));
+      return Value(std::move(out));
+    });
+
+    return;
+  }
+
+  // Built-in dsa module (MVP)
+  if (normalized == "dsa") {
+    importedModules_["dsa"] = true;
+
+    registerBuiltin("dsa.Stack", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
+      MapValue st;
+      mapSetValue(st, "__kind", std::string("dsa.Stack"));
+      mapSetValue(st, "data", Value(ListValue{}));
+      return Value(std::move(st));
+    });
+
+    registerBuiltin("dsa.Queue", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
+      MapValue q;
+      mapSetValue(q, "__kind", std::string("dsa.Queue"));
+      mapSetValue(q, "data", Value(ListValue{}));
+      return Value(std::move(q));
+    });
+
+    registerBuiltin("dsa.Graph", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      MapValue g;
+      mapSetValue(g, "__kind", std::string("dsa.Graph"));
+      mapSetValue(g, "directed", args.empty() ? Value(false) : args[0]);
+      mapSetValue(g, "vertices", Value(ListValue{}));
+      mapSetValue(g, "edges", Value(ListValue{}));
+      return Value(std::move(g));
+    });
+
+    registerBuiltin("dsa.quickSort", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.empty() || !std::holds_alternative<ListValue>(args[0]))
+        throw RuntimeError(pos, "dsa.quickSort expects a list");
+      ListValue sorted = std::get<ListValue>(args[0]);
+      std::sort(sorted.elements.begin(), sorted.elements.end(),
+        [&pos](const std::shared_ptr<ValueBox>& a, const std::shared_ptr<ValueBox>& b) {
+          return asDouble(pos, a->val) < asDouble(pos, b->val);
+        });
+      return Value(std::move(sorted));
+    });
+
+    registerBuiltin("dsa.dijkstra", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.size() < 2) throw RuntimeError(pos, "dsa.dijkstra expects graph and source");
+      auto* g = std::get_if<MapValue>(&args[0]);
+      if (!g || toString(mapGetValue(*g, "__kind")) != "dsa.Graph")
+        throw RuntimeError(pos, "dsa.dijkstra expects Graph");
+      std::string src = toString(args[1]);
+      std::string target = args.size() > 2 ? toString(args[2]) : std::string();
+      bool hasTarget = args.size() > 2;
+      bool directed = isTruthy(mapGetValue(*g, "directed"));
+
+      const Value* edgesVal = mapGetValuePtr(*g, "edges");
+      auto* edges = edgesVal ? std::get_if<ListValue>(edgesVal) : nullptr;
+      if (!edges) return std::monostate{};
+
+      std::unordered_map<std::string, std::vector<std::pair<std::string, double>>> adj;
+      for (const auto& ep : edges->elements) {
+        auto* em = std::get_if<MapValue>(&ep->val);
+        if (!em) continue;
+        std::string from = toString(mapGetValue(*em, "from"));
+        std::string to = toString(mapGetValue(*em, "to"));
+        double w = asDouble(pos, mapGetValue(*em, "weight"));
+        adj[from].push_back({to, w});
+        if (!directed) adj[to].push_back({from, w});
+      }
+
+      if (!adj.count(src)) return std::monostate{};
+
+      using Node = std::pair<double, std::string>;
+      std::priority_queue<Node, std::vector<Node>, std::greater<Node>> pq;
+      std::unordered_map<std::string, double> dist;
+      std::unordered_map<std::string, std::string> prev;
+
+      for (const auto& kv : adj) dist[kv.first] = std::numeric_limits<double>::infinity();
+      dist[src] = 0.0;
+      pq.push({0.0, src});
+
+      while (!pq.empty()) {
+        auto [d, u] = pq.top();
+        pq.pop();
+        if (d > dist[u]) continue;
+        if (hasTarget && u == target) break;
+
+        for (const auto& [v, w] : adj[u]) {
+          double nd = d + w;
+          if (!dist.count(v) || nd < dist[v]) {
+            dist[v] = nd;
+            prev[v] = u;
+            pq.push({nd, v});
+          }
+        }
+      }
+
+      if (hasTarget) {
+        if (!dist.count(target) || !std::isfinite(dist[target])) return std::monostate{};
+        ListValue path;
+        std::vector<std::string> rev;
+        std::string cur = target;
+        rev.push_back(cur);
+        while (cur != src && prev.count(cur)) {
+          cur = prev[cur];
+          rev.push_back(cur);
+        }
+        std::reverse(rev.begin(), rev.end());
+        for (const auto& p : rev) path.elements.push_back(std::make_shared<ValueBox>(Value(p)));
+
+        MapValue out;
+        mapSetValue(out, "distance", dist[target]);
+        mapSetValue(out, "path", Value(std::move(path)));
+        return Value(std::move(out));
+      }
+
+      MapValue all;
+      for (const auto& kv : dist) {
+        if (std::isfinite(kv.second)) mapSetValue(all, kv.first, kv.second);
+      }
+      return Value(std::move(all));
+    });
+
+    return;
+  }
+
+  // Built-in ai module (MVP)
+  if (normalized == "ai") {
+    importedModules_["ai"] = true;
+
+    registerBuiltin("ai.RandomForest", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      MapValue m;
+      mapSetValue(m, "__kind", std::string("ai.RandomForest"));
+      mapSetValue(m, "nEstimators", args.empty() ? Value(int64_t(100)) : args[0]);
+      mapSetValue(m, "trained", false);
+      return Value(std::move(m));
+    });
+
+    registerBuiltin("ai.accuracy", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.size() != 2) throw RuntimeError(pos, "ai.accuracy expects yTrue, yPred");
+      auto* yt = std::get_if<ListValue>(&args[0]);
+      auto* yp = std::get_if<ListValue>(&args[1]);
+      if (!yt || !yp) throw RuntimeError(pos, "ai.accuracy expects lists");
+      int64_t n = static_cast<int64_t>(std::min(yt->elements.size(), yp->elements.size()));
+      if (n == 0) return 0.0;
+      int64_t ok = 0;
+      for (int64_t i = 0; i < n; ++i) if (valuesEqual(yt->elements[i]->val, yp->elements[i]->val)) ok++;
+      return static_cast<double>(ok) / static_cast<double>(n);
+    });
+
+    registerBuiltin("ai.classificationReport", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
+      return std::string("precision recall f1-score support\n(report MVP)");
+    });
+
+    return;
+  }
+
+  // Built-in data module (MVP)
+  if (normalized == "data") {
+    importedModules_["data"] = true;
+
+    registerBuiltin("data.DataFrame", [](Interpreter&, const SourcePos& pos, const std::vector<Value>& args) -> Value {
+      if (args.empty() || !std::holds_alternative<MapValue>(args[0]))
+        throw RuntimeError(pos, "data.DataFrame expects a map/dict");
+      MapValue df;
+      mapSetValue(df, "__kind", std::string("data.DataFrame"));
+      mapSetValue(df, "data", args[0]);
+      return Value(std::move(df));
+    });
+
+    registerBuiltin("data.readCSV", [](Interpreter&, const SourcePos&, const std::vector<Value>&) -> Value {
+      MapValue df;
+      mapSetValue(df, "__kind", std::string("data.DataFrame"));
+      mapSetValue(df, "data", Value(MapValue{}));
+      mapSetValue(df, "source", std::string("csv"));
+      return Value(std::move(df));
+    });
+
+    return;
+  }
+
+  // Built-in image module (MVP)
+  if (normalized == "image") {
+    importedModules_["image"] = true;
+    registerBuiltin("image.load", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      MapValue img;
+      mapSetValue(img, "__kind", std::string("image.Image"));
+      mapSetValue(img, "path", args.empty() ? Value(std::string("")) : args[0]);
+      mapSetValue(img, "width", int64_t(0));
+      mapSetValue(img, "height", int64_t(0));
+      return Value(std::move(img));
+    });
+    return;
+  }
+
+  // Simulated GUI module for interpreter mode.
+  if (normalized == "ui") {
+    // Constructors and helpers
+    registerBuiltin("ui.Window", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      MapValue window;
+      mapSetValue(window, "__kind", std::string("ui.Window"));
+      mapSetValue(window, "title", args.size() > 0 ? args[0] : Value(std::string("Vibe Window")));
+      mapSetValue(window, "width", args.size() > 1 ? args[1] : Value(int64_t(800)));
+      mapSetValue(window, "height", args.size() > 2 ? args[2] : Value(int64_t(600)));
+      mapSetValue(window, "closed", false);
+      mapSetValue(window, "__updateCb", std::monostate{});
+      mapSetValue(window, "__eventCb", std::monostate{});
+      return Value(std::move(window));
+    });
+
+    registerBuiltin("ui.Canvas", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      MapValue canvas;
+      mapSetValue(canvas, "__kind", std::string("ui.Canvas"));
+      mapSetValue(canvas, "width", args.size() > 0 ? args[0] : Value(int64_t(800)));
+      mapSetValue(canvas, "height", args.size() > 1 ? args[1] : Value(int64_t(600)));
+      return Value(std::move(canvas));
+    });
+
+    registerBuiltin("ui.Color", [](Interpreter&, const SourcePos&, const std::vector<Value>& args) -> Value {
+      MapValue color;
+      mapSetValue(color, "__kind", std::string("ui.Color"));
+      mapSetValue(color, "r", args.size() > 0 ? args[0] : Value(int64_t(255)));
+      mapSetValue(color, "g", args.size() > 1 ? args[1] : Value(int64_t(255)));
+      mapSetValue(color, "b", args.size() > 2 ? args[2] : Value(int64_t(255)));
+      return Value(std::move(color));
+    });
+
+    auto mkColor = [](int64_t r, int64_t g, int64_t b) -> Value {
+      MapValue c;
+      mapSetValue(c, "__kind", std::string("ui.Color"));
+      mapSetValue(c, "r", r);
+      mapSetValue(c, "g", g);
+      mapSetValue(c, "b", b);
+      return Value(std::move(c));
+    };
+
+    MapValue colors;
+    mapSetValue(colors, "Black", mkColor(0, 0, 0));
+    mapSetValue(colors, "White", mkColor(255, 255, 255));
+    mapSetValue(colors, "Red", mkColor(255, 0, 0));
+    mapSetValue(colors, "Green", mkColor(0, 255, 0));
+    mapSetValue(colors, "Blue", mkColor(0, 0, 255));
+    mapSetValue(colors, "Yellow", mkColor(255, 255, 0));
+    mapSetValue(colors, "Cyan", mkColor(0, 255, 255));
+    mapSetValue(colors, "Magenta", mkColor(255, 0, 255));
+    mapSetValue(colors, "Gray", mkColor(128, 128, 128));
+
+    MapValue eventType;
+    mapSetValue(eventType, "KeyDown", int64_t(1));
+    mapSetValue(eventType, "KeyUp", int64_t(2));
+    mapSetValue(eventType, "MouseDown", int64_t(3));
+    mapSetValue(eventType, "MouseUp", int64_t(4));
+
+    MapValue ui;
+    mapSetValue(ui, "__kind", std::string("ui.Module"));
+    mapSetValue(ui, "Color", Value(std::move(colors)));
+    mapSetValue(ui, "EventType", Value(std::move(eventType)));
+    env_->define("ui", Value(std::move(ui)), true);
     return;
   }
 
@@ -1624,6 +2270,15 @@ Value Interpreter::eval(const Expr& e) {
       if (auto* mem = std::get_if<MemberExpr>(&node.callee->node)) {
         std::vector<Value> args;
         for (const auto& a : node.args) args.push_back(eval(*a));
+
+        // Fast-path dotted module builtins (e.g. time.millis(), ui.Window())
+        if (auto* ident = std::get_if<IdentExpr>(&mem->object->node)) {
+          std::string dotted = ident->name.lexeme + "." + mem->member.lexeme;
+          auto bit = builtins_.find(dotted);
+          if (bit != builtins_.end()) {
+            return bit->second(*this, e.pos, args);
+          }
+        }
 
         // If the object is a simple variable, get a reference so mutating
         // methods (push, set, sort, etc.) modify the original value.
@@ -2232,6 +2887,573 @@ Value Interpreter::memberCall(const SourcePos& pos, Value& obj,
 
   // ── Map methods ──────────────────────────
   if (auto* mv = std::get_if<MapValue>(&obj)) {
+    Value kind = mapGetValue(*mv, "__kind");
+    std::string kindStr = std::holds_alternative<std::string>(kind) ? std::get<std::string>(kind) : "";
+
+    if (kindStr == "neural.Tensor" || kindStr == "Tensor") {
+      if (member == "shape") return mapGetValue(*mv, "shape");
+      if (member == "numel") return static_cast<int64_t>(tensorData(*mv).size());
+      if (member == "device") return mapGetValue(*mv, "device");
+      if (member == "to") {
+        if (args.empty()) throw RuntimeError(pos, "Tensor.to() expects device");
+        mapSetValue(*mv, "device", toString(args[0]));
+        return obj;
+      }
+      if (member == "requiresGrad") {
+        if (args.empty()) return mapGetValue(*mv, "requiresGrad");
+        mapSetValue(*mv, "requiresGrad", isTruthy(args[0]));
+        return obj;
+      }
+      if (member == "reshape") {
+        if (args.empty()) throw RuntimeError(pos, "reshape() expects shape list");
+        auto ns = readIntList(args[0]);
+        if (ns.empty()) throw RuntimeError(pos, "reshape() expects numeric shape list");
+        auto data = tensorData(*mv);
+        if (static_cast<int64_t>(data.size()) != product(ns))
+          throw RuntimeError(pos, "reshape() element count mismatch");
+        mapSetValue(*mv, "shape", toListValue(ns));
+        return obj;
+      }
+      if (member == "flatten") {
+        auto data = tensorData(*mv);
+        return Value(makeTensor(data, {static_cast<int64_t>(data.size())}, isTruthy(mapGetValue(*mv, "requiresGrad")), toString(mapGetValue(*mv, "device"))));
+      }
+      if (member == "sum") {
+        auto data = tensorData(*mv);
+        double s = 0.0;
+        for (double x : data) s += x;
+        return s;
+      }
+      if (member == "mean") {
+        auto data = tensorData(*mv);
+        if (data.empty()) return 0.0;
+        double s = 0.0;
+        for (double x : data) s += x;
+        return s / static_cast<double>(data.size());
+      }
+      if (member == "item") {
+        auto data = tensorData(*mv);
+        if (data.empty()) throw RuntimeError(pos, "item() on empty tensor");
+        return data[0];
+      }
+      if (member == "backward") {
+        auto data = tensorData(*mv);
+        ListValue grad;
+        for (size_t i = 0; i < data.size(); ++i)
+          grad.elements.push_back(std::make_shared<ValueBox>(Value(1.0)));
+        mapSetValue(*mv, "grad", Value(std::move(grad)));
+        return std::monostate{};
+      }
+      if (member == "grad") {
+        return mapGetValue(*mv, "grad");
+      }
+      if (member == "add" || member == "sub" || member == "mul" || member == "div") {
+        if (args.empty()) throw RuntimeError(pos, member + "() expects operand");
+        auto lhs = tensorData(*mv);
+        std::vector<double> rhs;
+        bool scalar = false;
+        double s = 0.0;
+        if (auto* i = std::get_if<int64_t>(&args[0])) { scalar = true; s = static_cast<double>(*i); }
+        else if (auto* d = std::get_if<double>(&args[0])) { scalar = true; s = *d; }
+        else {
+          auto tm = tensorFromValue(args[0]);
+          rhs = tensorData(tm);
+          if (rhs.size() != lhs.size()) throw RuntimeError(pos, member + "() tensor size mismatch");
+        }
+        for (size_t i = 0; i < lhs.size(); ++i) {
+          double r = scalar ? s : rhs[i];
+          if (member == "add") lhs[i] += r;
+          else if (member == "sub") lhs[i] -= r;
+          else if (member == "mul") lhs[i] *= r;
+          else {
+            if (r == 0.0) throw RuntimeError(pos, "div() by zero");
+            lhs[i] /= r;
+          }
+        }
+        return Value(makeTensor(lhs, tensorShape(*mv), isTruthy(mapGetValue(*mv, "requiresGrad")), toString(mapGetValue(*mv, "device"))));
+      }
+      if (member == "matmul") {
+        if (args.empty()) throw RuntimeError(pos, "matmul() expects tensor");
+        auto rhsMap = tensorFromValue(args[0]);
+        auto aShape = tensorShape(*mv);
+        auto bShape = tensorShape(rhsMap);
+        if (aShape.size() != 2 || bShape.size() != 2)
+          throw RuntimeError(pos, "matmul() currently supports 2D tensors only");
+        int64_t m = aShape[0], k = aShape[1], k2 = bShape[0], n = bShape[1];
+        if (k != k2) throw RuntimeError(pos, "matmul() incompatible shapes");
+        auto a = tensorData(*mv);
+        auto b = tensorData(rhsMap);
+        std::vector<double> c(static_cast<size_t>(m * n), 0.0);
+        for (int64_t i = 0; i < m; ++i) {
+          for (int64_t j = 0; j < n; ++j) {
+            for (int64_t t = 0; t < k; ++t) {
+              c[static_cast<size_t>(i * n + j)] += a[static_cast<size_t>(i * k + t)] * b[static_cast<size_t>(t * n + j)];
+            }
+          }
+        }
+        return Value(makeTensor(c, {m, n}, isTruthy(mapGetValue(*mv, "requiresGrad")), toString(mapGetValue(*mv, "device"))));
+      }
+      throw RuntimeError(pos, "Tensor has no method '" + member + "'");
+    }
+
+    if (kindStr == "neural.Model") {
+      if (member == "compile") {
+        if (args.size() < 2) throw RuntimeError(pos, "compile() expects optimizer, loss");
+        mapSetValue(*mv, "optimizer", args[0]);
+        mapSetValue(*mv, "loss", args[1]);
+        mapSetValue(*mv, "compiled", true);
+        return std::monostate{};
+      }
+      if (member == "fit") {
+        if (args.size() < 2) throw RuntimeError(pos, "fit() expects trainX, trainY");
+        int64_t epochs = 1;
+        if (args.size() > 2) epochs = asInt(pos, args[2]);
+
+        auto* x = std::get_if<ListValue>(&args[0]);
+        auto* y = std::get_if<ListValue>(&args[1]);
+        if (!x || !y) throw RuntimeError(pos, "fit() expects list trainX/trainY");
+        int64_t n = static_cast<int64_t>(std::min(x->elements.size(), y->elements.size()));
+
+        mapSetValue(*mv, "trained", true);
+        mapSetValue(*mv, "epochs", epochs);
+        ListValue losses;
+        for (int64_t e = 0; e < epochs; ++e) {
+          double lossSum = 0.0;
+          int64_t samples = 0;
+          for (int64_t i = 0; i < n; ++i) {
+            Value predV = runSequentialPredict(*mv, x->elements[i]->val);
+            auto pred = valueToVector(predV);
+            auto truth = valueToVector(y->elements[i]->val);
+            if (pred.empty() || truth.empty()) continue;
+            size_t m = std::min(pred.size(), truth.size());
+            double mse = 0.0;
+            for (size_t k = 0; k < m; ++k) {
+              double diff = pred[k] - truth[k];
+              mse += diff * diff;
+            }
+            lossSum += mse / static_cast<double>(m);
+            samples++;
+          }
+          losses.elements.push_back(std::make_shared<ValueBox>(Value(samples > 0 ? lossSum / static_cast<double>(samples) : 0.0)));
+        }
+        MapValue hist;
+        mapSetValue(hist, "loss", Value(std::move(losses)));
+        return Value(std::move(hist));
+      }
+      if (member == "evaluate") {
+        if (args.size() < 2) throw RuntimeError(pos, "evaluate() expects testX, testY");
+        auto* x = std::get_if<ListValue>(&args[0]);
+        auto* y = std::get_if<ListValue>(&args[1]);
+        if (!x || !y) throw RuntimeError(pos, "evaluate() expects list testX/testY");
+        int64_t n = static_cast<int64_t>(std::min(x->elements.size(), y->elements.size()));
+
+        double lossSum = 0.0;
+        int64_t used = 0;
+        int64_t correct = 0;
+        for (int64_t i = 0; i < n; ++i) {
+          Value predV = runSequentialPredict(*mv, x->elements[i]->val);
+          auto pred = valueToVector(predV);
+          auto truth = valueToVector(y->elements[i]->val);
+          if (pred.empty() || truth.empty()) continue;
+          size_t m = std::min(pred.size(), truth.size());
+
+          double mse = 0.0;
+          for (size_t k = 0; k < m; ++k) {
+            double diff = pred[k] - truth[k];
+            mse += diff * diff;
+          }
+          lossSum += mse / static_cast<double>(m);
+
+          size_t pi = static_cast<size_t>(std::distance(pred.begin(), std::max_element(pred.begin(), pred.end())));
+          size_t yi = static_cast<size_t>(std::distance(truth.begin(), std::max_element(truth.begin(), truth.end())));
+          if (pi == yi) correct++;
+          used++;
+        }
+
+        MapValue metrics;
+        mapSetValue(metrics, "loss", used > 0 ? lossSum / static_cast<double>(used) : 0.0);
+        mapSetValue(metrics, "accuracy", used > 0 ? static_cast<double>(correct) / static_cast<double>(used) : 0.0);
+        return Value(std::move(metrics));
+      }
+      if (member == "predict") {
+        if (args.empty()) throw RuntimeError(pos, "predict() expects input");
+        if (auto* batch = std::get_if<ListValue>(&args[0])) {
+          bool isBatch = !batch->elements.empty() &&
+                         (std::holds_alternative<ListValue>(batch->elements[0]->val) ||
+                          std::holds_alternative<MapValue>(batch->elements[0]->val));
+          if (isBatch) {
+            ListValue out;
+            for (const auto& sample : batch->elements) {
+              out.elements.push_back(std::make_shared<ValueBox>(runSequentialPredict(*mv, sample->val)));
+            }
+            return Value(std::move(out));
+          }
+        }
+        return runSequentialPredict(*mv, args[0]);
+      }
+      if (member == "summary") {
+        const Value* layersVal = mapGetValuePtr(*mv, "layers");
+        auto* layers = layersVal ? std::get_if<ListValue>(layersVal) : nullptr;
+        int64_t count = layers ? static_cast<int64_t>(layers->elements.size()) : int64_t(0);
+        return std::string("Sequential model with ") + std::to_string(count) + " layers";
+      }
+      if (member == "save") {
+        if (args.empty()) throw RuntimeError(pos, "save() expects path");
+        mapSetValue(*mv, "savedPath", toString(args[0]));
+        return true;
+      }
+      throw RuntimeError(pos, "Model has no method '" + member + "'");
+    }
+
+    if (kindStr == "dsa.Stack") {
+      Value* data = mapGetValuePtr(*mv, "data");
+      auto* lv = data ? std::get_if<ListValue>(data) : nullptr;
+      if (!lv) throw RuntimeError(pos, "invalid Stack storage");
+      if (member == "push") {
+        if (args.empty()) throw RuntimeError(pos, "push() expects value");
+        lv->elements.push_back(std::make_shared<ValueBox>(args[0]));
+        return std::monostate{};
+      }
+      if (member == "pop") {
+        if (lv->elements.empty()) return std::monostate{};
+        Value out = lv->elements.back()->val;
+        lv->elements.pop_back();
+        return out;
+      }
+      if (member == "peek") {
+        if (lv->elements.empty()) return std::monostate{};
+        return lv->elements.back()->val;
+      }
+      if (member == "isEmpty") return lv->elements.empty();
+      if (member == "size") return static_cast<int64_t>(lv->elements.size());
+      if (member == "clear") { lv->elements.clear(); return std::monostate{}; }
+      throw RuntimeError(pos, "Stack has no method '" + member + "'");
+    }
+
+    if (kindStr == "dsa.Queue") {
+      Value* data = mapGetValuePtr(*mv, "data");
+      auto* lv = data ? std::get_if<ListValue>(data) : nullptr;
+      if (!lv) throw RuntimeError(pos, "invalid Queue storage");
+      if (member == "enqueue") {
+        if (args.empty()) throw RuntimeError(pos, "enqueue() expects value");
+        lv->elements.push_back(std::make_shared<ValueBox>(args[0]));
+        return std::monostate{};
+      }
+      if (member == "dequeue") {
+        if (lv->elements.empty()) return std::monostate{};
+        Value out = lv->elements.front()->val;
+        lv->elements.erase(lv->elements.begin());
+        return out;
+      }
+      if (member == "front") {
+        if (lv->elements.empty()) return std::monostate{};
+        return lv->elements.front()->val;
+      }
+      if (member == "isEmpty") return lv->elements.empty();
+      if (member == "size") return static_cast<int64_t>(lv->elements.size());
+      if (member == "clear") { lv->elements.clear(); return std::monostate{}; }
+      throw RuntimeError(pos, "Queue has no method '" + member + "'");
+    }
+
+    if (kindStr == "dsa.Graph") {
+      Value* vertsVal = mapGetValuePtr(*mv, "vertices");
+      Value* edgesVal = mapGetValuePtr(*mv, "edges");
+      auto* verts = vertsVal ? std::get_if<ListValue>(vertsVal) : nullptr;
+      auto* edges = edgesVal ? std::get_if<ListValue>(edgesVal) : nullptr;
+      if (!verts || !edges) throw RuntimeError(pos, "invalid Graph storage");
+
+      if (member == "addVertex") {
+        if (args.empty()) throw RuntimeError(pos, "addVertex() expects name");
+        verts->elements.push_back(std::make_shared<ValueBox>(Value(toString(args[0]))));
+        return std::monostate{};
+      }
+      if (member == "addEdge") {
+        if (args.size() < 3) throw RuntimeError(pos, "addEdge() expects from,to,weight");
+        MapValue e;
+        mapSetValue(e, "from", toString(args[0]));
+        mapSetValue(e, "to", toString(args[1]));
+        mapSetValue(e, "weight", args[2]);
+        edges->elements.push_back(std::make_shared<ValueBox>(Value(std::move(e))));
+        return std::monostate{};
+      }
+      if (member == "neighbors") {
+        if (args.empty()) throw RuntimeError(pos, "neighbors() expects vertex");
+        std::string v = toString(args[0]);
+        ListValue out;
+        for (const auto& ep : edges->elements) {
+          auto* em = std::get_if<MapValue>(&ep->val);
+          if (!em) continue;
+          if (toString(mapGetValue(*em, "from")) == v)
+            out.elements.push_back(std::make_shared<ValueBox>(mapGetValue(*em, "to")));
+        }
+        return Value(std::move(out));
+      }
+      throw RuntimeError(pos, "Graph has no method '" + member + "'");
+    }
+
+    if (kindStr == "ai.RandomForest") {
+      if (member == "fit") {
+        mapSetValue(*mv, "trained", true);
+        return std::monostate{};
+      }
+      if (member == "predict") {
+        if (args.empty()) throw RuntimeError(pos, "predict() expects data list");
+        auto* x = std::get_if<ListValue>(&args[0]);
+        if (!x) throw RuntimeError(pos, "predict() expects list");
+        ListValue out;
+        for (size_t i = 0; i < x->elements.size(); ++i)
+          out.elements.push_back(std::make_shared<ValueBox>(Value(int64_t(0))));
+        return Value(std::move(out));
+      }
+      if (member == "score") return 0.5;
+      throw RuntimeError(pos, "RandomForest has no method '" + member + "'");
+    }
+
+    if (kindStr == "data.DataFrame") {
+      if (member == "shape") {
+        const Value* dataVal = mapGetValuePtr(*mv, "data");
+        auto* data = dataVal ? std::get_if<MapValue>(dataVal) : nullptr;
+        if (!data) return Value(ListValue{});
+        int64_t cols = static_cast<int64_t>(data->entries.size());
+        int64_t rows = 0;
+        if (!data->entries.empty()) {
+          auto* firstCol = std::get_if<ListValue>(&data->entries.front().second->val);
+          if (firstCol) rows = static_cast<int64_t>(firstCol->elements.size());
+        }
+        ListValue shape;
+        shape.elements.push_back(std::make_shared<ValueBox>(Value(rows)));
+        shape.elements.push_back(std::make_shared<ValueBox>(Value(cols)));
+        return Value(std::move(shape));
+      }
+      if (member == "columns") {
+        const Value* dataVal = mapGetValuePtr(*mv, "data");
+        auto* data = dataVal ? std::get_if<MapValue>(dataVal) : nullptr;
+        ListValue cols;
+        if (data) {
+          for (const auto& kv : data->entries)
+            cols.elements.push_back(std::make_shared<ValueBox>(Value(kv.first)));
+        }
+        return Value(std::move(cols));
+      }
+      if (member == "head") {
+        return obj;
+      }
+      if (member == "select") {
+        if (args.empty()) throw RuntimeError(pos, "select() expects column names list");
+        auto* names = std::get_if<ListValue>(&args[0]);
+        const Value* dataVal = mapGetValuePtr(*mv, "data");
+        auto* data = dataVal ? std::get_if<MapValue>(dataVal) : nullptr;
+        if (!names || !data) throw RuntimeError(pos, "select() expects valid columns and DataFrame");
+        MapValue outData;
+        for (const auto& n : names->elements) {
+          std::string key = toString(n->val);
+          auto it = std::find_if(data->entries.begin(), data->entries.end(),
+            [&key](const auto& p) { return p.first == key; });
+          if (it != data->entries.end()) outData.entries.push_back(*it);
+        }
+        MapValue outDf;
+        mapSetValue(outDf, "__kind", std::string("data.DataFrame"));
+        mapSetValue(outDf, "data", Value(std::move(outData)));
+        return Value(std::move(outDf));
+      }
+      if (member == "describe") {
+        return std::string("DataFrame describe() MVP");
+      }
+      throw RuntimeError(pos, "DataFrame has no method '" + member + "'");
+    }
+
+    if (kindStr == "image.Image") {
+      if (member == "resize") {
+        if (args.size() < 2) throw RuntimeError(pos, "resize() expects width,height");
+        mapSetValue(*mv, "width", asInt(pos, args[0]));
+        mapSetValue(*mv, "height", asInt(pos, args[1]));
+        return obj;
+      }
+      if (member == "grayscale") {
+        mapSetValue(*mv, "mode", std::string("grayscale"));
+        return obj;
+      }
+      if (member == "save") {
+        if (args.empty()) throw RuntimeError(pos, "save() expects path");
+        mapSetValue(*mv, "savedPath", toString(args[0]));
+        return true;
+      }
+      if (member == "show") return std::monostate{};
+      throw RuntimeError(pos, "Image has no method '" + member + "'");
+    }
+
+    if (kindStr == "ui.Window") {
+      if (member == "setUpdateCallback") {
+        if (args.size() != 1) throw RuntimeError(pos, "setUpdateCallback() expects 1 argument");
+        mapSetValue(*mv, "__updateCb", args[0]);
+        return std::monostate{};
+      }
+      if (member == "setEventCallback") {
+        if (args.size() != 1) throw RuntimeError(pos, "setEventCallback() expects 1 argument");
+        mapSetValue(*mv, "__eventCb", args[0]);
+        return std::monostate{};
+      }
+      if (member == "addWidget") {
+        return std::monostate{};
+      }
+      if (member == "close") {
+        mapSetValue(*mv, "closed", true);
+        return std::monostate{};
+      }
+      if (member == "show") {
+        Value cb = mapGetValue(*mv, "__updateCb");
+        Value evCb = mapGetValue(*mv, "__eventCb");
+
+        if (!gGui.initialized) {
+          if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+            throw RuntimeError(pos, std::string("SDL init failed: ") + SDL_GetError());
+          }
+          gGui.initialized = true;
+        }
+
+        int w = static_cast<int>(asInt(pos, mapGetValue(*mv, "width")));
+        int h = static_cast<int>(asInt(pos, mapGetValue(*mv, "height")));
+        std::string title = toString(mapGetValue(*mv, "title"));
+
+        gGui.window = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED,
+                                       SDL_WINDOWPOS_CENTERED, w, h,
+                                       SDL_WINDOW_SHOWN);
+        if (!gGui.window) {
+          throw RuntimeError(pos, std::string("SDL window create failed: ") + SDL_GetError());
+        }
+
+        gGui.renderer = SDL_CreateRenderer(gGui.window, -1,
+                                           SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        if (!gGui.renderer) {
+          SDL_DestroyWindow(gGui.window);
+          gGui.window = nullptr;
+          throw RuntimeError(pos, std::string("SDL renderer create failed: ") + SDL_GetError());
+        }
+
+        mapSetValue(*mv, "closed", false);
+
+        while (!isTruthy(mapGetValue(*mv, "closed"))) {
+          SDL_Event sev;
+          while (SDL_PollEvent(&sev)) {
+            if (sev.type == SDL_QUIT) {
+              mapSetValue(*mv, "closed", true);
+              break;
+            }
+
+            if (!std::holds_alternative<std::monostate>(evCb)) {
+              MapValue key;
+              mapSetValue(key, "keyCode", int64_t(0));
+              mapSetValue(key, "character", std::string(""));
+
+              MapValue mouse;
+              mapSetValue(mouse, "x", int64_t(0));
+              mapSetValue(mouse, "y", int64_t(0));
+              mapSetValue(mouse, "button", int64_t(0));
+
+              MapValue evt;
+              mapSetValue(evt, "type", int64_t(0));
+              mapSetValue(evt, "key", Value(key));
+              mapSetValue(evt, "mouse", Value(std::move(mouse)));
+
+              if (sev.type == SDL_KEYDOWN || sev.type == SDL_KEYUP) {
+                mapSetValue(evt, "type", int64_t(sev.type == SDL_KEYDOWN ? 1 : 2));
+                mapSetValue(key, "keyCode", int64_t(sev.key.keysym.sym));
+                char ch = static_cast<char>(sev.key.keysym.sym);
+                if (ch >= 32 && ch <= 126) {
+                  mapSetValue(key, "character", std::string(1, static_cast<char>(std::tolower(ch))));
+                }
+                mapSetValue(evt, "key", Value(std::move(key)));
+              }
+
+              callValue(pos, evCb, {Value(std::move(evt))});
+            }
+          }
+
+          if (isTruthy(mapGetValue(*mv, "closed"))) break;
+
+          if (!std::holds_alternative<std::monostate>(cb)) {
+            callValue(pos, cb, {});
+          }
+
+          SDL_RenderPresent(gGui.renderer);
+        }
+
+        SDL_DestroyRenderer(gGui.renderer);
+        gGui.renderer = nullptr;
+        SDL_DestroyWindow(gGui.window);
+        gGui.window = nullptr;
+        return std::monostate{};
+      }
+    }
+
+    if (kindStr == "ui.Canvas") {
+      if (member == "clear") {
+        if (gGui.renderer) {
+          Value color = args.empty() ? Value(std::monostate{}) : args[0];
+          setRendererColorFromValue(color);
+          SDL_RenderClear(gGui.renderer);
+        }
+        return std::monostate{};
+      }
+      if (member == "drawLine") {
+        if (gGui.renderer && args.size() >= 5) {
+          setRendererColorFromValue(args[4]);
+          SDL_RenderDrawLine(gGui.renderer,
+                             static_cast<int>(asInt(pos, args[0])),
+                             static_cast<int>(asInt(pos, args[1])),
+                             static_cast<int>(asInt(pos, args[2])),
+                             static_cast<int>(asInt(pos, args[3])));
+        }
+        return std::monostate{};
+      }
+      if (member == "drawRect") {
+        if (gGui.renderer && args.size() >= 6) {
+          SDL_Rect r;
+          r.x = static_cast<int>(asInt(pos, args[0]));
+          r.y = static_cast<int>(asInt(pos, args[1]));
+          r.w = static_cast<int>(asInt(pos, args[2]));
+          r.h = static_cast<int>(asInt(pos, args[3]));
+          setRendererColorFromValue(args[4]);
+          bool fill = isTruthy(args[5]);
+          if (fill) SDL_RenderFillRect(gGui.renderer, &r);
+          else SDL_RenderDrawRect(gGui.renderer, &r);
+        }
+        return std::monostate{};
+      }
+      if (member == "drawCircle") {
+        if (gGui.renderer && args.size() >= 5) {
+          int cx = static_cast<int>(asInt(pos, args[0]));
+          int cy = static_cast<int>(asInt(pos, args[1]));
+          int radius = static_cast<int>(asInt(pos, args[2]));
+          setRendererColorFromValue(args[3]);
+          bool fill = isTruthy(args[4]);
+          for (int y = -radius; y <= radius; ++y) {
+            for (int x = -radius; x <= radius; ++x) {
+              int d2 = x * x + y * y;
+              if ((fill && d2 <= radius * radius) || (!fill && d2 >= (radius - 1) * (radius - 1) && d2 <= radius * radius)) {
+                SDL_RenderDrawPoint(gGui.renderer, cx + x, cy + y);
+              }
+            }
+          }
+        }
+        return std::monostate{};
+      }
+      if (member == "drawText") {
+        // Minimal placeholder text rendering (block glyphs)
+        if (gGui.renderer && args.size() >= 4) {
+          int x = static_cast<int>(asInt(pos, args[0]));
+          int y = static_cast<int>(asInt(pos, args[1]));
+          std::string text = toString(args[2]);
+          setRendererColorFromValue(args[3]);
+          for (size_t i2 = 0; i2 < text.size(); ++i2) {
+            SDL_Rect r{ x + static_cast<int>(i2) * 6, y, 4, 8 };
+            SDL_RenderFillRect(gGui.renderer, &r);
+          }
+        }
+        return std::monostate{};
+      }
+    }
+
     if (member == "get") {
       if (args.empty()) throw RuntimeError(pos, "get() expects 1 arg");
       std::string key = toString(args[0]);

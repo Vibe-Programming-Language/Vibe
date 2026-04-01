@@ -1,0 +1,17 @@
+import dsa;
+
+fn main() {
+    var g = dsa.Graph(true);
+    g.addVertex("A");
+    g.addVertex("B");
+    g.addVertex("C");
+    g.addVertex("D");
+
+    g.addEdge("A", "B", 1.0);
+    g.addEdge("B", "C", 2.0);
+    g.addEdge("A", "C", 10.0);
+    g.addEdge("C", "D", 1.0);
+
+    var best = dsa.dijkstra(g, "A", "D");
+    print(best);
+}
