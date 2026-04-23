@@ -61,6 +61,10 @@ enum class TokenType {
   KwFrom,
   KwAs,
 
+  // Python Interop
+  KwPython,
+  KwPyImport,
+
   // Async / concurrency
   KwAsync,
   KwAwait,

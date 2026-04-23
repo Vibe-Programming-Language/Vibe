@@ -120,6 +120,8 @@ void Codegen::genStmt(const Stmt& s) {
     else if constexpr (std::is_same_v<T, ClassDeclStmt>) genClassDecl(node);
     else if constexpr (std::is_same_v<T, EnumDeclStmt>) genEnumDecl(node);
     else if constexpr (std::is_same_v<T, ImportStmt>) genImport(node);
+    else if constexpr (std::is_same_v<T, PyImportStmt>) genPyImport(node);
+    else if constexpr (std::is_same_v<T, PythonBlockStmt>) genPythonBlock(node);
     else if constexpr (std::is_same_v<T, ExportStmt>) genExport(node);
     else if constexpr (std::is_same_v<T, InterfaceDeclStmt>) {
       // Interfaces map to abstract classes in C++
@@ -360,7 +362,19 @@ void Codegen::genImport(const ImportStmt& imp) {
   else if (mod == "io") emitLine("#include <fstream>");
   else if (mod == "os") emitLine("#include <cstdlib>");
 }
+void Codegen::genPyImport(const PyImportStmt& imp) {
+  emitLine("// Python interop import");
+  std::string name = imp.moduleName.lexeme;
+  std::string alias = imp.alias ? imp.alias->lexeme : name;
+  emitLine("nova::python::import_module(\"" + name + "\", \"" + alias + "\");");
+}
 
+void Codegen::genPythonBlock(const PythonBlockStmt& pyb) {
+  emitLine("// Embedded Python execution");
+  // escape quotes
+  std::string code = pyb.codeString.lexeme;
+  emitLine("nova::python::exec_string(" + code + ");");
+}
 void Codegen::genExport(const ExportStmt& exp) {
   genStmt(*exp.decl);
 }

@@ -11,6 +11,10 @@ add_executable(vibe
   src/parser/parser.cpp
   src/codegen/codegen.cpp
   src/runtime/runtime.cpp
+  src/runtime/actor_system.cpp
+  src/stdlib/vibe_python.cpp
+  src/stdlib/vibe_dataframe.cpp
+  src/stdlib/vibe_quantum.cpp
 )
 
 target_include_directories(vibe PRIVATE src)

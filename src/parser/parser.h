@@ -48,6 +48,8 @@ private:
   StmtPtr parseInterface();
   StmtPtr parseEnum();
   StmtPtr parseImport();
+  StmtPtr parsePyImport();
+  StmtPtr parsePythonBlock();
   StmtPtr parseExport();
   StmtPtr parseSpawn();
   StmtPtr parseUnsafe();

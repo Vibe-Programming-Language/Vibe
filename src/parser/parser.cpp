@@ -88,8 +88,12 @@ StmtPtr Parser::parseDeclOrStmt() {
     return parseEnum();
   if (check(TokenType::KwImport))
     return parseImport();
+  if (check(TokenType::KwPyImport))
+    return parsePyImport();
   if (check(TokenType::KwExport))
     return parseExport();
+  if (check(TokenType::KwPython))
+    return parsePythonBlock();
   return parseStatement();
 }
 
@@ -897,6 +901,36 @@ StmtPtr Parser::parseImport() {
   Stmt s;
   s.pos = kw.pos;
   s.node = std::move(imp);
+  return makeStmt(kw.pos, std::move(s));
+}
+
+StmtPtr Parser::parsePyImport() {
+  Token kw = expect(TokenType::KwPyImport, "Expected 'pyimport'");
+  PyImportStmt imp;
+  imp.kw = kw;
+  imp.moduleName = expect(TokenType::Identifier, "Expected python module name");
+  if (match(TokenType::KwAs)) {
+    imp.alias = expect(TokenType::Identifier, "Expected alias name");
+  }
+  expect(TokenType::Semicolon, "Expected ';' after pyimport");
+
+  Stmt s;
+  s.pos = kw.pos;
+  s.node = std::move(imp);
+  return makeStmt(kw.pos, std::move(s));
+}
+
+StmtPtr Parser::parsePythonBlock() {
+  Token kw = expect(TokenType::KwPython, "Expected 'python'");
+  Token codeBlock = expect(TokenType::StringLiteral, "Expected python code string block");
+  PythonBlockStmt pyb;
+  pyb.kw = kw;
+  pyb.codeString = codeBlock;
+  expect(TokenType::Semicolon, "Expected ';' after python block");
+  
+  Stmt s;
+  s.pos = kw.pos;
+  s.node = std::move(pyb);
   return makeStmt(kw.pos, std::move(s));
 }
 

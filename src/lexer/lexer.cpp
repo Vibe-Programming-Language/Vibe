@@ -45,6 +45,9 @@ static const std::unordered_map<std::string_view, TokenType> kKeywords = {
     {"export", TokenType::KwExport},
     {"from", TokenType::KwFrom},
     {"as", TokenType::KwAs},
+    // python interop
+    {"python", TokenType::KwPython},
+    {"pyimport", TokenType::KwPyImport},
     // async
     {"async", TokenType::KwAsync},
     {"await", TokenType::KwAwait},
@@ -105,6 +108,8 @@ std::string_view toString(TokenType t) {
   case TokenType::KwExport: return "export";
   case TokenType::KwFrom: return "from";
   case TokenType::KwAs: return "as";
+  case TokenType::KwPython: return "python";
+  case TokenType::KwPyImport: return "pyimport";
   case TokenType::KwAsync: return "async";
   case TokenType::KwAwait: return "await";
   case TokenType::KwSpawn: return "spawn";

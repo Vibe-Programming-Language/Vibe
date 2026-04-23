@@ -45,6 +45,8 @@ private:
   void genClassDecl(const ClassDeclStmt& c);
   void genEnumDecl(const EnumDeclStmt& e);
   void genImport(const ImportStmt& imp);
+  void genPyImport(const PyImportStmt& imp);
+  void genPythonBlock(const PythonBlockStmt& pyb);
   void genExport(const ExportStmt& exp);
 
   std::string genExpr(const Expr& e);

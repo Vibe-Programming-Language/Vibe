@@ -295,6 +295,17 @@ struct ImportStmt {
   std::vector<Token> names;  // from X import a, b, c
 };
 
+struct PyImportStmt {
+  Token kw;
+  Token moduleName;
+  std::optional<Token> alias;
+};
+
+struct PythonBlockStmt {
+  Token kw;
+  Token codeString; // The actual raw python code block
+};
+
 struct ExportStmt {
   Token kw;
   StmtPtr decl;  // the fn/class/var being exported
@@ -316,6 +327,7 @@ struct Stmt {
                DoWhileStmt, ForStmt, ForInStmt, MatchStmt, ReturnStmt,
                BreakStmt, ContinueStmt, ThrowStmt, TryCatchStmt, FnDeclStmt,
                ClassDeclStmt, InterfaceDeclStmt, EnumDeclStmt, ImportStmt,
+               PyImportStmt, PythonBlockStmt,
                ExportStmt, SpawnStmt, UnsafeBlock>
       node;
 };
